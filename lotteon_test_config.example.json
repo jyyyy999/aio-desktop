@@ -1,0 +1,51 @@
+{
+  "cookie": "",
+  "discord_webhook_url": "",
+  "mention": "@everyone",
+  "targets": [
+    "https://www.lotteon.com/p/product/LM8809644094473?sitmNo=LM8809644094473_001"
+  ],
+  "poll_interval_seconds": 2,
+  "poll_jitter_seconds": 1,
+  "min_interval_seconds": 2,
+  "drop_interval_seconds": 1,
+  "drop_jitter_seconds": 0.2,
+  "max_concurrency": 4,
+  "session_check_minutes": 10,
+  "buy_on_restock_only": false,
+  "discord_notify": [
+    "opened",
+    "blocked",
+    "session",
+    "paid"
+  ],
+  "max_buys_per_run": 1,
+  "stop_after_success": true,
+  "cooldown_minutes": 30,
+  "max_price": 0,
+  "max_attempts": 3,
+  "retry_delay_seconds": 2,
+  "open_browser": true,
+  "browser_headless": false,
+  "browser_timeout_seconds": 20,
+  "order_action": "submit",
+  "pay_method": [
+    "간편결제",
+    "L.PAY 카드"
+  ],
+  "pay_method_mark": "L.PAY|L.pay|엘페이",
+  "pay_card": "",
+  "pg_password": "",
+  "pg_dump": true,
+  "paid_wait_minutes": 10,
+  "paid_markers": [
+    "주문이 완료",
+    "주문완료",
+    "결제가 완료",
+    "결제 완료",
+    "orderComplete",
+    "orderResult",
+    "우리 이제 곧 만나요",
+    "배송지로 안전하게 배송해"
+  ]
+}

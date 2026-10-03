@@ -1,0 +1,36 @@
+{
+  "cookie": "",
+  "discord_webhook_url": "",
+  "mention": "@everyone",
+  "targets": [
+    "https://www.lotteon.com/m/product/LM8800286278528?sitmNo=LM8800286278528_001"
+  ],
+  "poll_interval_seconds": 3,
+  "poll_jitter_seconds": 1,
+  "min_interval_seconds": 3,
+  "max_concurrency": 4,
+  "session_check_minutes": 10,
+  "buy_on_restock_only": true,
+  "discord_notify": [
+    "opened",
+    "blocked",
+    "session"
+  ],
+  "max_buys_per_run": 1,
+  "stop_after_success": true,
+  "cooldown_minutes": 0,
+  "max_price": 0,
+  "max_attempts": 3,
+  "retry_delay_seconds": 2,
+  "open_browser": true,
+  "browser_headless": false,
+  "browser_timeout_seconds": 20,
+  "order_action": "submit",
+  "pay_method": [
+    "간편결제",
+    "L.PAY 카드"
+  ],
+  "pay_method_mark": "L.PAY|L.pay|엘페이",
+  "pay_card": "",
+  "pg_dump": true
+}

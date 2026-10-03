@@ -1,0 +1,98 @@
+{
+  "cookie": "",
+  "discord_webhook_url": "",
+  "mention": "@everyone",
+  "targets": [
+    {
+      "gno": "71233804",
+      "ea": 1,
+      "mode": "DIRECT",
+      "max_price": 48000,
+      "label": "원피스 카드게임 - 창해의 칠걸 (BOX)"
+    }
+  ],
+  "poll_interval_seconds": 3,
+  "poll_jitter_seconds": 1,
+  "max_concurrency": 4,
+  "discover": [
+    {
+      "url": "원피스 카드게임",
+      "contains": [
+        "카드게임"
+      ],
+      "ea": 2,
+      "mode": "DIRECT",
+      "max_price": 48000
+    },
+    {
+      "url": "창해",
+      "ea": 2,
+      "mode": "DIRECT",
+      "max_price": 48000
+    }
+  ],
+  "discover_interval_seconds": 15,
+  "session_check_minutes": 5,
+  "buy_on_restock_only": false,
+  "discord_notify": [
+    "paid",
+    "stuck",
+    "found",
+    "session"
+  ],
+  "max_carts_per_run": 1,
+  "stop_after_success": true,
+  "cooldown_minutes": 3,
+  "max_price": 0,
+  "allow_option_goods": false,
+  "max_attempts": 3,
+  "retry_delay_seconds": 2,
+  "open_browser": true,
+  "browser": "selenium",
+  "browser_headless": false,
+  "browser_offscreen": false,
+  "browser_timeout_seconds": 20,
+  "browser_profile_dir": "",
+  "prelogin_url": "",
+  "prelogin_marker": "nidlogin",
+  "prelogin_wait_minutes": 5,
+  "preheat_browser": true,
+  "meta_fresh_seconds": 1800,
+  "order_action": "submit",
+  "pg_capture": true,
+  "pg_clicks": [
+    "동의합니다",
+    "다음",
+    "카카오페이",
+    "다음",
+    "카톡결제",
+    {
+      "fill": "#phoneNumber",
+      "value": ""
+    },
+    {
+      "fill": "#dateOfBirth",
+      "value": ""
+    },
+    "결제요청"
+  ],
+  "pg_settle_seconds": 3,
+  "pg_webhook_url": "",
+  "pg_mention": "",
+  "pg_probe": [],
+  "pg_finish": [
+    "결제내용에 동의",
+    "결제"
+  ],
+  "paid_wait_minutes": 10,
+  "paid_markers": [
+    "주문이 완료",
+    "주문완료",
+    "order_complete",
+    "orderComplete",
+    "order_result"
+  ],
+  "queue_watch": true,
+  "queue_wait_seconds": 10,
+  "queue_markers": null
+}

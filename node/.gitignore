@@ -1,0 +1,17 @@
+# 빌드 결과와 의존성
+node_modules/
+dist/
+
+# **설정·상태·로그는 절대 올리지 않는다.**
+# 쿠키(신분)와 결제창에 넣는 개인 정보가 여기 들어 있다. 지금은 이 폴더 밖(aio/)에
+# 있지만, 나중에 저장소 안으로 옮겨 오더라도 실수로 딸려 가지 않게 미리 막아 둔다.
+*_config.json
+*_state.json
+*.log
+bnkr-pg-dump.txt
+bnkr-test-pg-dump.txt
+naver-page-dump.txt
+chrome-profile/
+
+# (bnkr-buy-ts 저장소 시절에는 네이버·롯데온·waitwhile 판을 여기서 뺐다. 2026-10-03 부터
+#  aio 전체를 한 비공개 저장소로 올리므로 코드는 전부 올린다.)
