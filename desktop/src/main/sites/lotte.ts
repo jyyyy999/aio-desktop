@@ -335,6 +335,9 @@ export const lotte: SiteAdapter = {
   // 원본 order.ts 의 말들. 주문서·결제창이 열리면 "…크롬 창에서 직접 해주세요", 다 끝나면 "결제 완료 — …".
   progress: {
     countdown: /다음 확인 (\d+)초/,
+    // tracer.ts 의 lineOf: "대기열 내 앞 273명 · 줄 281명 · 예상 12초 · 5초째"
+    queue: /대기열 내 앞 ([\d,]+)명(?: · 줄 ([\d,]+)명)?(?: · 예상 (\d+)초)?/,
+    queueDone: /대기열을 통과했습니다/,
     buying: /구매 가능, 바로 구매하기를 누릅니다/,
     checkout: /직접 해주세요/,
     paid: /결제 완료 — /,

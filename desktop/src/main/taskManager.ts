@@ -248,7 +248,7 @@ export class TaskManager extends EventEmitter {
         restarting: false, busySince: null, monitorStartedAt: null, timers: [], schedule: null, countdown: null,
         rt: {
           id, status: "idle", pid: null, startedAt: null, endedAt: null, exitCode: null, lastLine: "",
-          note: "", rounds: 0, lastCheckAt: null, phase: null,
+          note: "", rounds: 0, lastCheckAt: null, phase: null, queue: null,
           restartPending: false, scheduledFor: null, dropAt: null,
         },
       };
@@ -535,7 +535,7 @@ export class TaskManager extends EventEmitter {
     s.child = child;
     this.update(id, {
       status: "starting", pid: child.pid ?? null, startedAt: Date.now(), endedAt: null, exitCode: null,
-      restartPending: false, scheduledFor: null, note: "", phase: null,
+      restartPending: false, scheduledFor: null, note: "", phase: null, queue: null,
       // 설정이 바뀌어 다시 띄운 것이면 회차는 이어서 센다.
       ...(again ? {} : { rounds: 0, lastCheckAt: null }),
     });
@@ -583,7 +583,7 @@ export class TaskManager extends EventEmitter {
       }
       s.restarting = false;
       s.busySince = null;
-      this.update(id, { status, pid: null, endedAt: Date.now(), exitCode: s.exitRequest ?? code, restartPending: false, note: "" });
+      this.update(id, { status, pid: null, endedAt: Date.now(), exitCode: s.exitRequest ?? code, restartPending: false, note: "", queue: null });
       if (again) {
         this.push(id, "sys", "바뀐 설정으로 다시 시작합니다.");
         this.launch(id, true);
@@ -596,6 +596,8 @@ export class TaskManager extends EventEmitter {
     const a = this.adapterOf(task);
     const p = a.progress;
     if (p.round?.test(text)) this.update(task.id, this.roundDone(s));
+    if (p.queueDone?.test(text)) this.update(task.id, { queue: null });
+    else this.watchQueue(task, text);
     if (p.buying.test(text)) this.update(task.id, { phase: "buying" });
     else if (p.paid.test(text)) this.update(task.id, { phase: "paid" });
     else if (p.checkout.test(text)) this.update(task.id, { phase: "checkout" });
@@ -611,12 +613,28 @@ export class TaskManager extends EventEmitter {
   private watchStatus(task: TaskDef, s: Slot, text: string): void {
     const left = this.adapterOf(task).progress.countdown?.exec(text);
     const patch: Partial<TaskRuntime> = { note: text };
+    const queue = this.queueOf(task, text);
+    if (queue) patch.queue = queue;
     if (left) {
       const n = Number(left[1]);
       if (s.countdown === null || n >= s.countdown) Object.assign(patch, this.roundDone(s));
       s.countdown = n;
     }
     this.update(task.id, patch);
+  }
+
+  /** 대기열 줄이면 그 상태. 원본이 말한 예상 남은 초는 받은 시각(at)부터 화면이 줄여 보인다. */
+  private queueOf(task: TaskDef, text: string): TaskRuntime["queue"] {
+    const m = this.adapterOf(task).progress.queue?.exec(text);
+    if (!m) return null;
+    const num = (v: string | undefined): number | null => (v ? Number(v.replace(/,/g, "")) : null);
+    return { ahead: num(m[1]) ?? 0, total: num(m[2]), eta: num(m[3]), at: Date.now() };
+  }
+
+  /** 일반 로그 줄에 찍힌 대기열 상태 (감시가 상태 줄을 쓰는 동안은 원본이 로그로 적는다). */
+  private watchQueue(task: TaskDef, text: string): void {
+    const queue = this.queueOf(task, text);
+    if (queue) this.update(task.id, { queue });
   }
 
   /** 원본이 한 번 확인했다. 확인을 이어 가는 것이니 단계도 "확인 중" 으로 돌아온다 (구매를 접었거나 끝냈다). */

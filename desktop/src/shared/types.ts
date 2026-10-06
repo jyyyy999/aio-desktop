@@ -111,6 +111,14 @@ export type TaskStatus =
  */
 export type TaskPhase = "watching" | "buying" | "checkout" | "paid";
 
+/** 사이트 대기열에 서 있는 동안의 상태. eta 는 at 시각에 원본이 말한 남은 초다. */
+export interface QueueState {
+  ahead: number;
+  total: number | null;
+  eta: number | null;
+  at: number;
+}
+
 export interface TaskRuntime {
   id: string;
   status: TaskStatus;
@@ -127,6 +135,8 @@ export interface TaskRuntime {
   lastCheckAt: number | null;
   /** 도는 동안 어디쯤인가. 아직 모르면(막 띄웠다·끝났다) null. */
   phase: TaskPhase | null;
+  /** 대기열에 서 있으면 그 상태. 서 있지 않으면 null. */
+  queue: QueueState | null;
   /**
    * 돌던 중에 설정이 바뀌어 다시 시작하려고 기다리는 중인가. 구매 중이거나 구매 창이 열려
    * 있으면 그게 끝날 때까지 미룬다 — 그동안은 바뀌기 전 설정으로 돈다.
