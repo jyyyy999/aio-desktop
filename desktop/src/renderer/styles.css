@@ -258,6 +258,8 @@ label.inline { display: flex; align-items: center; gap: 6px; font-size: 12px; co
 .tw-cell.phase.buying .v { color: var(--warn); }
 .tw-cell.phase.checkout { border-color: #4c3a8a; }
 .tw-cell.phase.checkout .v { color: #c4b5fd; }
+.tw-cell.phase.queue { border-color: #4c3a8a; }
+.tw-cell.phase.queue .v { color: #c4b5fd; }
 .tw-cell.phase.paid { border-color: #14532d; }
 .tw-cell.phase.paid .v { color: var(--go); }
 .tw-target { font-size: 12px; }

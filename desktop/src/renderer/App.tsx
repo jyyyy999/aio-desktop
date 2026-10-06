@@ -142,7 +142,7 @@ export function mergeLogs(have: LogLine[], more: LogLine[]): LogLine[] {
 export function idleRuntime(id: string): TaskRuntime {
   return {
     id, status: "idle", pid: null, startedAt: null, endedAt: null, exitCode: null, lastLine: "",
-    note: "", rounds: 0, lastCheckAt: null, phase: null, restartPending: false, scheduledFor: null, dropAt: null,
+    note: "", rounds: 0, lastCheckAt: null, phase: null, queue: null, restartPending: false, scheduledFor: null, dropAt: null,
   };
 }
 

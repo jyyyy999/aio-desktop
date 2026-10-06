@@ -132,6 +132,10 @@ export interface BusySignal {
 export interface ProgressSignal {
   round?: RegExp;
   countdown?: RegExp;
+  /** 사이트 대기열(줄 서기)에 선 줄. 묶음: 1 내 앞 인원 · 2 줄 전체(없을 수 있다) · 3 예상 남은 초(없을 수 있다) */
+  queue?: RegExp;
+  /** 대기열을 빠져나왔다는 줄 */
+  queueDone?: RegExp;
   buying: RegExp;
   checkout: RegExp;
   paid: RegExp;

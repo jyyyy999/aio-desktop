@@ -15,6 +15,9 @@ const aio = window.aio;
 /** 태스크 창이 들고 있는 로그 줄. main 은 2000 줄을 들고 있지만 여기서는 최근 것만 본다. */
 const KEEP = 1000;
 
+/** 대기열 상태를 이만큼(ms) 못 받으면 줄에서 나온 것으로 보고 숨긴다. 원본은 로그에 10초마다 적는다. */
+const QUEUE_STALE_MS = 15_000;
+
 const PHASE_LABEL: Record<TaskPhase, string> = {
   watching: "확인 중",
   buying: "구매 중",
@@ -104,6 +107,9 @@ export function TaskWatch({ taskId }: { taskId: string }) {
     : rt.status === "scheduled" && rt.scheduledFor
       ? `예약 · ${countdown(rt.scheduledFor - now)} 뒤`
       : STATUS_LABEL[rt.status];
+  // 원본이 몇 초마다 한 번 말해 주니, 그 사이는 받은 시각부터 줄여 보인다. 오래 말이 없으면 숨긴다.
+  const queueShown = live && rt.queue !== null && now - rt.queue.at < QUEUE_STALE_MS;
+  const queueLeft = queueShown && rt.queue!.eta !== null ? Math.max(0, rt.queue!.eta - Math.floor((now - rt.queue!.at) / 1000)) : null;
   const target = [
     name,
     task.option && `옵션 ${task.option}`,
@@ -152,6 +158,15 @@ export function TaskWatch({ taskId }: { taskId: string }) {
             <div className="l">상태</div>
             <div className="v">{headline}</div>
           </div>
+          {queueShown && (
+            <div className="tw-cell phase queue">
+              <div className="l">대기열</div>
+              <div className="v" title={`내 앞 ${rt.queue!.ahead.toLocaleString()}명${rt.queue!.total ? ` · 줄 ${rt.queue!.total.toLocaleString()}명` : ""}`}>
+                {queueLeft === null ? `내 앞 ${rt.queue!.ahead.toLocaleString()}명` : `남은 약 ${countdown(queueLeft * 1000)}`}
+                {queueLeft !== null && <span className="muted small"> · 앞 {rt.queue!.ahead.toLocaleString()}명</span>}
+              </div>
+            </div>
+          )}
           <div className="tw-cell">
             <div className="l">간격</div>
             <div className="v">{intervalOf(task, info)}</div>
