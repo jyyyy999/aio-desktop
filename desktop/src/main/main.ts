@@ -2,7 +2,7 @@
  * Electron main. 창을 띄우고, 렌더러의 요청을 TaskManager 로 넘기고, 워커에서 올라온
  * 상태·로그를 렌더러로 흘린다. 여기에 태스크 상태를 따로 들고 있지 않는다.
  */
-import { app, BrowserWindow, dialog, ipcMain, session, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, screen, session, shell } from "electron";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -72,6 +72,14 @@ const rendererPrefs = (): Electron.WebPreferences => ({
 // 동안 브라우저를 안 띄운다 (롯데는 HTTP 로 보고, 네이버는 헤드리스 탭을 1초 열었다 닫는다). 그 태스크의
 // 상태·로그만 흘려 준다. 창이 없는 태스크에는 아무것도 보내지 않는다.
 
+/** 창 크기를 지금 화면의 작업 영역 안으로 줄인다 — 작은 화면에서 아래가 잘리지 않게. */
+function fitToScreen(width: number, height: number, minWidth: number, minHeight: number) {
+  const area = screen.getPrimaryDisplay().workArea;
+  const w = Math.min(width, area.width);
+  const h = Math.min(height, area.height);
+  return { width: w, height: h, minWidth: Math.min(minWidth, w), minHeight: Math.min(minHeight, h) };
+}
+
 const taskWatches = new Map<string, BrowserWindow>();
 
 /** 그 태스크의 태스크 창에 보낸다. 창이 없거나 닫혔으면 아무것도 안 한다. */
@@ -89,7 +97,7 @@ function openTaskWatch(id: string): void {
   }
   if (!manager.list().some((t) => t.id === id)) throw new Error(`없는 태스크입니다: ${id}`);
   const watch = new BrowserWindow({
-    width: 900, height: 700, minWidth: 560, minHeight: 420, backgroundColor: "#0d0f14",
+    ...fitToScreen(900, 700, 560, 420), backgroundColor: "#0d0f14",
     title: "태스크 창 — AIO Task Manager", webPreferences: rendererPrefs(),
   });
   watch.removeMenu();
@@ -157,7 +165,7 @@ function openMonitorPopup(id: string): void {
   const entry = monitors.list().find((e) => e.def.id === id);
   if (!entry) throw new Error(`없는 모니터입니다: ${id}`);
   const popup = new BrowserWindow({
-    width: 820, height: 760, minWidth: 560, minHeight: 480, backgroundColor: "#0d0f14",
+    ...fitToScreen(820, 760, 560, 480), backgroundColor: "#0d0f14",
     title: `모니터 — ${entry.def.name}`, webPreferences: rendererPrefs(),
   });
   popup.removeMenu();
@@ -405,10 +413,7 @@ async function requestQuit(): Promise<void> {
 
 function createWindow(): void {
   win = new BrowserWindow({
-    width: 1320,
-    height: 840,
-    minWidth: 960,
-    minHeight: 560,
+    ...fitToScreen(1320, 840, 960, 560),
     backgroundColor: "#0d0f14",
     title: "AIO Task Manager",
     webPreferences: rendererPrefs(),
