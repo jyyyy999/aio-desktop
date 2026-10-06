@@ -243,7 +243,8 @@ label.inline { display: flex; align-items: center; gap: 6px; font-size: 12px; co
 .modal .modal-text { margin: 0; }
 
 /* ── 태스크 창 ─────────────────────────────────────────────────────── */
-.task-watch { height: 100%; display: flex; flex-direction: column; }
+.task-watch { height: 100%; display: flex; flex-direction: column; overflow-y: auto; }
+.task-watch > * { flex-shrink: 0; }
 .tw-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
 .tw-title { font-size: 15px; font-weight: 600; }
 .tw-state { display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
@@ -266,7 +267,7 @@ label.inline { display: flex; align-items: center; gap: 6px; font-size: 12px; co
 }
 .tw-hint { margin: 0; padding: 7px 10px; border-left: 2px solid #8b5cf6; background: #1b1733; color: #d8ccff; font-size: 12px; border-radius: 0 6px 6px 0; }
 .tw-hint.live { border-left-color: var(--info); background: #0c2230; color: #9bd9f5; }
-.tw-logs { flex: 1; display: flex; flex-direction: column; min-height: 0; background: #0a0c10; }
+.tw-logs { flex: 1 0 180px; display: flex; flex-direction: column; min-height: 180px; background: #0a0c10; }
 .tw-foot { display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: var(--panel); border-top: 1px solid var(--line); }
 
 /* ── 모니터 창 (팝업) ─────────────────────────────────────────────────── */
