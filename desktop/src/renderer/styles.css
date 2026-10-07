@@ -267,6 +267,19 @@ label.inline { display: flex; align-items: center; gap: 6px; font-size: 12px; co
 .tw-cell.phase.paid { border-color: #14532d; }
 .tw-cell.phase.paid .v { color: var(--go); }
 .tw-target { font-size: 12px; }
+.tw-link { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.tw-link p { margin: 0; }
+.tw-link-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tw-link-url { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c3c9d6; }
+.tw-link-input {
+  flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--line); border-radius: 7px; color: var(--text); padding: 5px 8px;
+}
+.tw-link-input:focus { outline: none; border-color: var(--accent); }
+.link-copy {
+  max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block;
+  border: 0; background: transparent; color: #9bb4e6; padding: 0; cursor: pointer; text-align: left;
+}
+.link-copy:hover { text-decoration: underline; }
 .tw-note {
   padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: #0a0c10; color: #c3c9d6;
   font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

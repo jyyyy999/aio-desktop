@@ -84,6 +84,26 @@ function profileUsers(
   return out;
 }
 
+/** 클립보드에 적는다. → 됐나 */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 표에 보일 짧은 링크 — 앞의 https://www. 와 뒤의 ?꼬리를 뗀다 (복사는 전체를). 주소가 아니면(롯데 상품번호) 그대로. */
+export function shortLink(url: string): string {
+  try {
+    const u = new URL(url.trim());
+    return `${u.hostname.replace(/^www\./, "")}${u.pathname}`;
+  } catch {
+    return url.trim();
+  }
+}
+
 /** 짧은 날짜·시각. 오늘이면 시각만. */
 export function when(iso: string | undefined): string {
   if (!iso) return "—";
@@ -183,6 +203,13 @@ export function App() {
   const [pinFor, setPinFor] = useState<string | null>(null);
   /** ▶ 를 눌렀는데 결제 비밀번호가 쓰일 태스크의 프로필에 비밀번호가 없다 — 묻는 중. */
   const [pinAsk, setPinAsk] = useState<{ task: TaskDef; profile: Profile } | null>(null);
+  /** 방금 링크를 복사한 태스크 — 그 칸에 잠깐 "복사했습니다" 를 보인다. */
+  const [copied, setCopied] = useState<string | null>(null);
+  useEffect(() => {
+    if (!copied) return;
+    const off = setTimeout(() => setCopied(null), 1500);
+    return () => clearTimeout(off);
+  }, [copied]);
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
 
@@ -442,6 +469,7 @@ export function App() {
                       <th>사이트</th>
                       <th>프로필</th>
                       <th>상품</th>
+                      <th>링크</th>
                       <th>모드</th>
                       <th>어디까지</th>
                       <th>상태</th>
@@ -486,6 +514,15 @@ export function App() {
                               {t.max_price ? ` · ≤${t.max_price.toLocaleString()}원` : ""}
                             </div>
                           </td>
+                          <td onClick={(e) => e.stopPropagation()}>
+                            {/* 누르면 전체 주소를 복사한다. 여기서 바로 고치지는 않는다 (실수 방지) — 고치기는 ✎ 나 태스크 창에서. */}
+                            <button
+                              type="button" className="link-copy mono" title={`${t.url}\n누르면 복사합니다`}
+                              onClick={() => void copyText(t.url.trim()).then((ok) => setCopied(ok ? t.id : null))}
+                            >
+                              {copied === t.id ? "복사했습니다" : shortLink(t.url) || "(주소 없음)"}
+                            </button>
+                          </td>
                           <td>
                             <div>{MODE_LABEL[t.mode]}</div>
                             {timingSummary(t) && <div className="muted small">{timingSummary(t)}</div>}
@@ -529,7 +566,7 @@ export function App() {
                     })}
                     {!shown.length && (
                       <tr>
-                        <td colSpan={10} className="empty">
+                        <td colSpan={11} className="empty">
                           태스크가 없습니다. <b>+ 태스크</b> 로 롯데온·네이버 상품 주소를 넣으세요.
                         </td>
                       </tr>

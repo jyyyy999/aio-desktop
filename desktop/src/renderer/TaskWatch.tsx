@@ -6,9 +6,11 @@
  * 출력으로 알아본 것 — 단계·확인 회차·마지막 확인·원본의 상태 줄 — 과 로그를 보인다.
  */
 import { useEffect, useState } from "react";
-import { MODE_LABEL, REPEATING_MODES, SITES } from "../shared/sites";
-import type { LogLine, Profile, SiteInfo, TaskDef, TaskPhase, TaskRuntime } from "../shared/types";
-import { countdown, errText, idleRuntime, LIVE, LOGIN_LABEL, LogView, mergeLogs, SiteTag, span, STATUS_LABEL, uptime } from "./App";
+import { MODE_LABEL, REPEATING_MODES, SITES, siteOfUrl } from "../shared/sites";
+import type { LogLine, Profile, SiteInfo, TaskDef, TaskPhase, TaskRuntime, TaskStatus } from "../shared/types";
+import {
+  copyText, countdown, errText, idleRuntime, LIVE, LOGIN_LABEL, LogView, mergeLogs, SiteTag, span, STATUS_LABEL, uptime,
+} from "./App";
 
 const aio = window.aio;
 
@@ -44,6 +46,98 @@ function intervalOf(t: TaskDef, info: SiteInfo | undefined): string {
 }
 
 const baseName = (path: string) => path.split(/[\\/]/).pop() ?? path;
+
+/**
+ * 상품 주소를 바꾸면 무엇이 되나. TaskManager.applyToLive 와 같은 규칙이다 (주소 하나만 바뀌는 경우).
+ *   돌고 있지 않다             → 다음 실행부터
+ *   한 번 돌고 끝나는 모드     → 이번 실행에는 반영하지 않는다 (다시 띄우면 한 번 더 산다)
+ *   원본이 다시 읽는 칸 (롯데) → 바로 반영 — 원본이 다음 확인 때 읽는다
+ *   그 밖 (네이버)             → 다시 시작 — 구매 중이거나 구매 창이 열려 있으면 그게 끝난 뒤에
+ */
+function linkChangeNote(task: TaskDef, status: TaskStatus, saved = false): string {
+  if (status === "scheduled") return "예약된 태스크입니다 — 띄울 때 새 주소로 돕니다.";
+  if (!LIVE.includes(status)) return "다음 실행부터 새 주소로 돕니다.";
+  if (!REPEATING_MODES.includes(task.mode)) {
+    return `한 번 돌고 끝나는 모드라 이번 실행에는 반영하지 ${saved ? "않았습니다" : "않습니다"} — 다음 실행부터 새 주소입니다.`;
+  }
+  if (SITES[task.site].liveFields.includes("url")) {
+    return saved ? "바로 반영했습니다 — 원본이 다음 확인 때 새 주소를 읽습니다." : "저장하면 바로 반영됩니다 — 원본이 다음 확인 때 새 주소를 읽습니다.";
+  }
+  return `${saved ? "다시 시작합니다" : "저장하면 다시 시작합니다"} — 구매 중이거나 구매 창이 열려 있으면 그게 끝난 뒤에. 확인 회차·감시 시간은 이어서 셉니다.`;
+}
+
+/**
+ * 상품 주소 — 보이고, 복사하고, 그 자리에서 고친다. 저장은 태스크 폼과 같은 saveTask 다 — 돌고 있으면 main 이
+ * 바로 반영하거나(롯데) 다시 시작하고(네이버), 그 일을 태스크 로그에 적는다.
+ */
+function LinkBox({ task, status }: { task: TaskDef; status: TaskStatus }) {
+  const [editing, setEditing] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const spec = SITES[task.site];
+  const draft = editing?.trim() ?? "";
+  const error = editing === null || !draft ? null
+    : siteOfUrl(draft) && siteOfUrl(draft) !== task.site
+      ? `${SITES[siteOfUrl(draft)!].name} 주소입니다 — 사이트는 바꿀 수 없습니다 (새 태스크로 만드세요).`
+      : spec.isProductUrl(draft) ? null : spec.urlError;
+  const changed = editing !== null && draft !== task.url.trim();
+
+  const save = async () => {
+    if (!draft || error || !changed) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      await aio.saveTask({ ...task, url: draft });
+      setEditing(null);
+      setMsg({ ok: true, text: `주소를 바꿨습니다. ${linkChangeNote(task, status, true)}` });
+    } catch (e) {
+      setMsg({ ok: false, text: errText(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copy = async () => setMsg((await copyText(task.url.trim()))
+    ? { ok: true, text: "주소를 복사했습니다." }
+    : { ok: false, text: "복사하지 못했습니다." });
+
+  return (
+    <div className="tw-link">
+      <div className="tw-link-row">
+        <span className="muted">상품 주소</span>
+        {editing === null ? (
+          <>
+            <span className="tw-link-url mono" title={task.url}>{task.url}</span>
+            <button type="button" className="btn small ghost" onClick={() => void copy()}>복사</button>
+            <button
+              type="button" className="btn small" disabled={status === "stopping"}
+              title={status === "stopping" ? "멈추는 중에는 고칠 수 없습니다" : undefined}
+              onClick={() => {
+                setMsg(null);
+                setEditing(task.url);
+              }}
+            >고치기</button>
+          </>
+        ) : (
+          <>
+            <input
+              className="tw-link-input mono" autoFocus value={editing} placeholder={spec.placeholder}
+              onChange={(e) => setEditing(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void save();
+                else if (e.key === "Escape") setEditing(null);
+              }}
+            />
+            <button type="button" className="btn small primary" disabled={busy || !!error || !draft || !changed} onClick={() => void save()}>저장</button>
+            <button type="button" className="btn small ghost" disabled={busy} onClick={() => setEditing(null)}>취소</button>
+          </>
+        )}
+      </div>
+      {editing !== null && (error ? <p className="err small">{error}</p> : <p className="tw-hint live">{linkChangeNote(task, status)}</p>)}
+      {msg && editing === null && <p className={`small ${msg.ok ? "ok" : "err"}`}>{msg.text}</p>}
+    </div>
+  );
+}
 
 export function TaskWatch({ taskId }: { taskId: string }) {
   const [tasks, setTasks] = useState<TaskDef[]>([]);
@@ -194,6 +288,7 @@ export function TaskWatch({ taskId }: { taskId: string }) {
           </div>
         </div>
         <div className="tw-target"><span className="muted">대상</span> {target}</div>
+        <LinkBox key={task.id} task={task} status={rt.status} />
         {rt.note && <div className="tw-note" title="원본이 기다리는 동안 제자리에서 고쳐 쓰는 줄">{rt.note}</div>}
         {phase === "checkout" && (
           <p className="tw-hint">
