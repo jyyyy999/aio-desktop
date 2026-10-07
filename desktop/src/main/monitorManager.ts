@@ -13,7 +13,8 @@
  *
  * 일시정지는 원본에 없다. 멈추고(Ctrl+C) 다시 띄운다 — 회차는 이어서 센다. 그 사이에 풀린 재입고는 놓친다.
  *
- * 네이버는 태스크와 같이 센다 (LiveUse): 요청률 합, 그리고 한 프로필로는 태스크·모니터 통틀어 하나만.
+ * 네이버는 태스크와 같이 센다 (LiveUse): 요청률 합. 사이트가 oneTaskPerProfile 이면 한 프로필로는 태스크·모니터
+ * 통틀어 하나만 (지금은 그런 사이트가 없다 — sites.ts).
  *
  * 이벤트
  *   "update"      (entry: MonitorEntry)   — 만들었다·고쳤다·상태가 바뀌었다
@@ -237,7 +238,7 @@ export class MonitorManager extends EventEmitter {
       if (!profile.hasLogin) return this.refuse(id, `'${profile.name}' 프로필에 로그인 정보가 없습니다 — 프로필 화면에서 로그인하세요.`);
     }
 
-    // 같은 사이트로 도는 태스크·모니터. 네이버는 한 프로필로 하나만, 그리고 요청률을 더한다.
+    // 같은 사이트로 도는 태스크·모니터. 요청률을 더하고, oneTaskPerProfile 인 사이트면 한 프로필로 하나만.
     const others = [...this.tasks(), ...this.liveUses(id)].filter((u) => u.site === def.site);
     if (spec.oneTaskPerProfile && profile) {
       const busy = others.find((u) => u.profileId === profile!.id);
@@ -417,8 +418,8 @@ export class MonitorManager extends EventEmitter {
   }
 
   /**
-   * 멈추고 끝나기를 기다린다 (늦으면 죽인다). 구매로 전환할 때 쓴다 — 네이버는 같은 프로필로 태스크를 띄우려면
-   * 모니터가 먼저 끝나 있어야 한다 (한 프로필에 하나).
+   * 멈추고 끝나기를 기다린다 (늦으면 죽인다). 구매로 전환할 때 쓴다 — 감시가 할 일은 끝났고, 같은 프로필로 띄울
+   * 구매 태스크와 요청률을 나눠 쓰지 않게 먼저 비킨다.
    */
   async halt(id: string): Promise<void> {
     const child = this.slots.get(id)?.child;

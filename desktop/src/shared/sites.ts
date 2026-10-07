@@ -81,8 +81,12 @@ export interface SiteSpec {
    */
   loginOptional: readonly TaskMode[];
   /**
-   * 한 프로필로 동시에 도는 태스크를 하나로 막나. 네이버는 로그인 세션째로 요청률을 보고 막으므로
-   * 한 세션에 태스크 하나만 둔다. 롯데는 쿠키를 태스크마다 환경변수로 넘겨 막을 것이 없다.
+   * 한 프로필로 동시에 도는 태스크·모니터를 하나로 막나. 지금은 두 사이트 다 막지 않는다.
+   *   롯데    쿠키를 태스크마다 환경변수로 넘긴다 — 원본은 크롬을 매번 빈 임시 프로필로 띄우고 쿠키를 심는다
+   *   네이버  워커마다 같은 세션 파일을 읽기만 한다 (원본은 --login 때만 쓴다). 로그인 세션째로 막는 요청률은
+   *           TaskManager·MonitorManager 가 프로필과 상관없이 사이트 합으로 막으므로 한 세션이 그 선을 넘을 수 없다
+   *           (2026-10-06 에 풀었다 — 그 전에는 true)
+   * 같은 프로필로 같은 상품을 둘 돌리면 같은 계정으로 주문서가 두 번 열린다.
    */
   oneTaskPerProfile: boolean;
 }
@@ -120,7 +124,7 @@ export const SITES: Record<SiteId, SiteSpec> = {
     liveFields: [],
     modes: ["watch", "once", "buy", "dry-run", "status"],
     loginOptional: [],
-    oneTaskPerProfile: true,
+    oneTaskPerProfile: false,
   },
 };
 

@@ -349,7 +349,7 @@ export class TaskManager extends EventEmitter {
    *   - 프로필 없이 도는 모드가 아니다 (sites.ts 의 loginOptional)
    *   - 프로필이 로그인 중이다 (로그인 창이 떠 있다 — 끝나야 어느 로그인으로 돌지 정해진다)
    *   - 프로필에 로그인 정보가 없다
-   *   - 한 프로필에 태스크 하나인 사이트(네이버)에서, 그 프로필로 이미 다른 태스크가 돈다
+   *   - 한 프로필에 태스크 하나인 사이트(sites.ts 의 oneTaskPerProfile — 지금은 없다)에서, 그 프로필로 이미 다른 태스크가 돈다
    */
   private profileFor(task: TaskDef): { profile: ProfileRef | null; error: string | null } {
     const spec = SITES[task.site];

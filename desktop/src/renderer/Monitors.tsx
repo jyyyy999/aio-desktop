@@ -377,7 +377,9 @@ function MonitorForm({ initial, profiles, infos, onSaved, onCancel }: {
             </label>
           </div>
           {warning && <p className="warn-line small">⚠️ {warning}</p>}
-          {m.site === "naver" && <p className="muted small">네이버는 한 프로필로 태스크·모니터를 통틀어 하나만 돌립니다 (같은 로그인 세션).</p>}
+          {SITES[m.site].oneTaskPerProfile && (
+            <p className="muted small">{SITES[m.site].name}는 한 프로필로 태스크·모니터를 통틀어 하나만 돌립니다 (같은 로그인 세션).</p>
+          )}
           {picked && picked.loginStatus !== "logged_in" && (
             <p className="warn-line small">⚠️ '{picked.name}' 은(는) {LOGIN_LABEL[picked.loginStatus]} 상태입니다 — 프로필 화면에서 로그인하세요.</p>
           )}

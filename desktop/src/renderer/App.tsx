@@ -441,7 +441,7 @@ export function App() {
                       const code = SITES[t.site].productCode(t.url);
                       const p = profileOf(t.profileId);
                       const issue = loginIssue(t, profiles);
-                      // 한 프로필에 하나인 사이트(네이버)에서 다른 태스크·모니터가 이 프로필을 쓰고 있으면 ▶ 가 거절된다.
+                      // 한 프로필에 하나인 사이트(oneTaskPerProfile)에서 다른 태스크·모니터가 이 프로필을 쓰고 있으면 ▶ 가 거절된다.
                       const others = p && SITES[t.site].oneTaskPerProfile ? profileUsers(p.id, tasks, runtimes, monitors, { except: t.id }) : [];
                       const profileTitle = p
                         ? [`${LOGIN_LABEL[p.loginStatus]} — ${p.statusNote}`, p.memo, others.length ? `사용 중: ${others.join(", ")}` : ""]
@@ -772,9 +772,9 @@ function ProfilePicker({ t, profiles, usersOf, error, onPick, onLogin, onCreated
   const choices = mine.filter((p) => p.isActive || p.id === t.profileId);
   const picked = mine.find((p) => p.id === t.profileId);
   const optional = spec.loginOptional.includes(t.mode);
-  // 한 프로필에 태스크 하나인 사이트(네이버)에서 그 프로필로 지금 도는 다른 태스크·모니터 — 있으면 ▶ 가 거절된다.
-  const busyWith = (id: string) => (spec.oneTaskPerProfile ? usersOf(id) : []);
-  const inUse = picked ? busyWith(picked.id) : [];
+  // 그 프로필로 지금 도는 다른 태스크·모니터. 한 프로필에 하나인 사이트(oneTaskPerProfile)면 ▶ 가 거절되고,
+  // 아니면 같은 계정으로 같이 돈다는 것만 알린다.
+  const inUse = picked ? usersOf(picked.id) : [];
 
   const create = async () => {
     setBusy(true);
@@ -812,7 +812,7 @@ function ProfilePicker({ t, profiles, usersOf, error, onPick, onLogin, onCreated
           {choices.map((p) => (
             <option key={p.id} value={p.id}>
               {`${p.name} (${LOGIN_LABEL[p.loginStatus]})${p.memo ? ` · ${p.memo}` : ""}` +
-                `${busyWith(p.id).length ? " — 사용 중" : ""}${p.isActive ? "" : " — 꺼짐"}`}
+                `${usersOf(p.id).length ? " — 사용 중" : ""}${p.isActive ? "" : " — 꺼짐"}`}
             </option>
           ))}
           <option value={NEW_PROFILE}>+ 새 프로필 만들기…</option>
@@ -849,7 +849,12 @@ function ProfilePicker({ t, profiles, usersOf, error, onPick, onLogin, onCreated
         </div>
       )}
       {!t.profileId && optional && <span className="muted small">프로필 없이 돕니다 — 쿠키를 싣지 않고 공개 페이지로 봅니다.</span>}
-      {inUse.length > 0 && (
+      {inUse.length > 0 && !spec.oneTaskPerProfile && (
+        <span className="muted small">
+          이 프로필은 지금 {inUse.join(", ")}에서도 쓰는 중입니다 — 같은 계정으로 같이 돕니다. 같은 상품이면 주문서가 두 번 열립니다.
+        </span>
+      )}
+      {inUse.length > 0 && spec.oneTaskPerProfile && (
         <span className="warn-text small">
           ⚠ 이 프로필은 현재 사용 중입니다 ({inUse.join(", ")}). {spec.name}는 같은 프로필로 동시에 하나만 실행할 수 있습니다
           — 저장은 되지만, 그것이 멈추기 전에는 시작하지 않습니다.
