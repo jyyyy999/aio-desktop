@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  FIELD_LABEL, isDiscordWebhook, LOGIN_LOG_PREFIX, loginLog, MODE_LABEL, planDrop, PREPARE_LOG, REPEATING_MODES, SITE_IDS, SITES,
-  siteLog, siteOfUrl, TIMING_BLANK,
+  FIELD_LABEL, isDiscordWebhook, LOGIN_LOG_PREFIX, loginLog, MODE_LABEL, PAYMENT_PIN_DIGITS, pinMatters, planDrop, PREPARE_LOG,
+  REPEATING_MODES, SITE_IDS, SITES, siteLog, siteOfUrl, TIMING_BLANK,
 } from "../shared/sites";
 import type {
   DropSettings, LoginStatus, LogLine, MonitorEntry, MonitorFound, MonitorStatus, OrderAction, Profile, Settings, SiteId, SiteInfo,
@@ -179,6 +179,10 @@ export function App() {
   /** 메인 창 위에 뜨는 재고 발견 알림 — 모니터마다 마지막 것 하나. 닫으면 알림만 치운다. */
   const [foundAlerts, setFoundAlerts] = useState<MonitorFound[]>([]);
   const [now, setNow] = useState(Date.now());
+  /** 결제 비밀번호 창을 연 프로필. */
+  const [pinFor, setPinFor] = useState<string | null>(null);
+  /** ▶ 를 눌렀는데 결제 비밀번호가 쓰일 태스크의 프로필에 비밀번호가 없다 — 묻는 중. */
+  const [pinAsk, setPinAsk] = useState<{ task: TaskDef; profile: Profile } | null>(null);
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
 
@@ -315,6 +319,17 @@ export function App() {
     setSelected(taskId);
   };
   const profileOf = (id: string | undefined) => (id ? profiles.find((p) => p.id === id) : undefined);
+  /**
+   * ▶ 하나. 결제 비밀번호가 쓰일 태스크(사는 모드 + 결제 단계까지)인데 프로필에 비밀번호가 없으면 먼저 묻는다.
+   * "전부 시작" 은 묻지 않는다 — main 이 태스크 로그에 적는다.
+   */
+  const startOne = (t: TaskDef) => {
+    const p = profileOf(t.profileId);
+    const info = infos.find((i) => i.site === t.site);
+    if (p && !p.hasPaymentPin && info && pinMatters(t, info.defaultAction)) return setPinAsk({ task: t, profile: p });
+    void aio.start(t.id);
+  };
+  const pinProfile = profileOf(pinFor ?? undefined);
 
   return (
     <div className="app">
@@ -415,6 +430,7 @@ export function App() {
                   void aio.listTasks().then(setTasks);
                 }}
                 onUpsert={upsertProfile}
+                onPin={setPinFor}
                 onInfos={setInfos}
               />
             ) : (
@@ -498,7 +514,7 @@ export function App() {
                               ) : rt.status === "scheduled" ? (
                                 <button className="icon stop" title="예약 거두기" onClick={() => void aio.stop(t.id)}>■</button>
                               ) : (
-                                <button className="icon go" title="시작" onClick={() => void aio.start(t.id)}>▶</button>
+                                <button className="icon go" title="시작" onClick={() => startOne(t)}>▶</button>
                               )}
                               <button className="icon" title="태스크 창 — 이 태스크의 상태·로그를 따로 봅니다" onClick={() => void aio.openTaskWatch(t.id)}>🖥</button>
                               <button
@@ -561,6 +577,26 @@ export function App() {
           usersOf={(profileId) => profileUsers(profileId, tasks, runtimes, monitors, { except: editing.id })}
           onLogin={login} onUpsertProfile={upsertProfile}
           onCancel={() => setEditing(null)} onSave={(t) => void saveTask(t)}
+        />
+      )}
+      {pinAsk && (
+        <PinAskModal
+          profile={pinAsk.profile}
+          onSetPin={() => {
+            setPinFor(pinAsk.profile.id);
+            setPinAsk(null);
+          }}
+          onStart={() => {
+            void aio.start(pinAsk.task.id);
+            setPinAsk(null);
+          }}
+          onClose={() => setPinAsk(null)}
+        />
+      )}
+      {pinProfile && (
+        <PinModal
+          profile={pinProfile} info={infos.find((i) => i.site === pinProfile.site)}
+          onSaved={upsertProfile} onClose={() => setPinFor(null)}
         />
       )}
       {settingsOpen && (
@@ -643,7 +679,10 @@ function TaskForm({ task, infos, live, profiles, usersOf, onLogin, onUpsertProfi
   const valid = spec.isProductUrl(t.url);
   /** 고른 "어디까지" 에서 원본이 실제로 어디서 멈추나 — 씨앗 설정(비밀번호·마지막 확인)에 따라 다르다. */
   const info = infos.find((i) => i.site === t.site);
-  const hint = info?.actionHints[t.action];
+  // 결제 비밀번호는 고른 프로필의 것 — 있으면 원본이 자판까지 누른다.
+  const picked = profiles.find((p) => p.id === t.profileId);
+  const hint = (picked?.hasPaymentPin ? info?.actionHintsWithPin : info?.actionHints)?.[t.action];
+  const noPin = !!picked && !picked.hasPaymentPin && !!info && pinMatters(t, info.defaultAction);
   const timingError = info ? checkTiming(t, info.timing).error : null;
   // 저장은 프로필이 없을 때만 막는다. 로그인이 안 된 프로필은 고를 수 있다 — 띄우기 전에 로그인하면 된다.
   const profileError = !t.profileId
@@ -739,7 +778,12 @@ function TaskForm({ task, infos, live, profiles, usersOf, onLogin, onUpsertProfi
             </select>
           </label>
         </div>
-        {hint && <p className="hint">{hint}</p>}
+        {hint && (
+          <p className="hint">
+            {hint}
+            {noPin && ` — '${picked!.name}' 프로필에 결제 비밀번호가 없어 결제 단계에서 사람이 넣어야 합니다 (프로필 화면에서 넣을 수 있습니다).`}
+          </p>
+        )}
         {t.mode === "drop" && info?.timing.drop && (
           <DropFields d={t.dropSettings} floor={info.timing.drop} set={(v) => set("dropSettings", v)} monitorMs={t.monitorDurationMs} />
         )}
@@ -1082,7 +1126,7 @@ function LiveNote({ before, after }: { before: TaskDef; after: TaskDef }) {
  * 프로필 화면. 사이트마다 로그인 프로필을 모아 보이고, 만들기·로그인·확인·로그아웃·고치기(이름·메모)·켜고 끄기·지우기를 한다.
  * 로그인은 창 안에서 사람이 한다 — 매니저는 아이디·비밀번호를 보지도 적지도 않는다.
  */
-function ProfilesPage({ profiles, tasks, runtimes, monitors, infos, selected, onLogin, onShowLog, onChanged, onUpsert, onInfos }: {
+function ProfilesPage({ profiles, tasks, runtimes, monitors, infos, selected, onLogin, onShowLog, onChanged, onUpsert, onPin, onInfos }: {
   profiles: Profile[]; tasks: TaskDef[]; runtimes: Record<string, TaskRuntime>; monitors: MonitorEntry[];
   infos: SiteInfo[]; selected: string | null;
   onLogin: (id: string) => void;
@@ -1090,6 +1134,8 @@ function ProfilesPage({ profiles, tasks, runtimes, monitors, infos, selected, on
   /** 지웠다 — 새 목록. */
   onChanged: (list: Profile[]) => void;
   onUpsert: (p: Profile) => void;
+  /** 결제 비밀번호 창을 연다. */
+  onPin: (profileId: string) => void;
   onInfos: (infos: SiteInfo[]) => void;
 }) {
   const [site, setSite] = useState<Filter>("all");
@@ -1136,6 +1182,7 @@ function ProfilesPage({ profiles, tasks, runtimes, monitors, infos, selected, on
                   users={profileUsers(p.id, tasks, runtimes, monitors, { scheduled: true })}
                   logOpen={selected === loginLog(p.id)}
                   onLogin={() => onLogin(p.id)} onShowLog={() => onShowLog(loginLog(p.id))} onEdit={() => setModal({ edit: p })}
+                  onPin={() => onPin(p.id)}
                   onUpsert={onUpsert} onDeleted={onChanged}
                 />
               ))}
@@ -1271,14 +1318,14 @@ const LOGIN_HOW: Record<SiteId, string> = {
   naver: "원본의 로그인 창(--login)이 뜨면 창 안에서 직접 로그인하세요.",
 };
 
-function ProfileCard({ p, assigned, users, logOpen, onLogin, onShowLog, onEdit, onUpsert, onDeleted }: {
+function ProfileCard({ p, assigned, users, logOpen, onLogin, onShowLog, onEdit, onPin, onUpsert, onDeleted }: {
   p: Profile;
   /** 이 프로필을 고른 태스크 수. */
   assigned: number;
   /** 이 프로필로 지금 도는(예약 포함) 태스크·모니터. */
   users: string[];
   logOpen: boolean;
-  onLogin: () => void; onShowLog: () => void; onEdit: () => void;
+  onLogin: () => void; onShowLog: () => void; onEdit: () => void; onPin: () => void;
   onUpsert: (p: Profile) => void; onDeleted: (list: Profile[]) => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -1332,6 +1379,11 @@ function ProfileCard({ p, assigned, users, logOpen, onLogin, onShowLog, onEdit, 
       {users.length > 0
         ? <div className="small in-use">현재 사용 중: {users.join(" · ")}</div>
         : <div className="muted small">고른 태스크 {assigned}개 · 지금 쓰는 곳 없음</div>}
+      <div className="small pin-line">
+        <span className="muted">결제 비밀번호</span>
+        {p.hasPaymentPin ? <span className="ok">설정됨</span> : <span className="warn-text">미설정 — 결제 단계에서 사람이 넣습니다</span>}
+        <button type="button" className="btn small ghost" disabled={busy} onClick={onPin}>{p.hasPaymentPin ? "바꾸기" : "넣기"}</button>
+      </div>
       <div className="muted small path" title={p.cookiesPath}>{p.cookiesPath}</div>
       <div className="account-actions">
         {loggingIn ? (
@@ -1360,6 +1412,121 @@ function ProfileCard({ p, assigned, users, logOpen, onLogin, onShowLog, onEdit, 
         <button type="button" className="icon" title="지우기" disabled={busy || loggingIn} onClick={remove}>✕</button>
       </div>
       {fail && <span className="err small">{fail}</span>}
+    </div>
+  );
+}
+
+/**
+ * 프로필의 결제 비밀번호 창. 숫자 6자리를 두 번 받아 맞으면 main 이 암호화해 프로필 폴더에 적는다. 값은 이 창의
+ * 입력칸에만 있다가 저장하면 비우고 창째로 닫는다 — main 은 돌려주지 않는다 (있나 없나만 안다).
+ */
+function PinModal({ profile, info, onSaved, onClose }: {
+  profile: Profile; info: SiteInfo | undefined; onSaved: (p: Profile) => void; onClose: () => void;
+}) {
+  const [pin, setPin] = useState("");
+  const [again, setAgain] = useState("");
+  const [show, setShow] = useState({ pin: false, again: false });
+  const [busy, setBusy] = useState(false);
+  const [fail, setFail] = useState<string | null>(null);
+  const digitsOnly = (v: string) => v.replace(/\D/g, "").slice(0, PAYMENT_PIN_DIGITS);
+  const problem = !pin ? null
+    : pin.length !== PAYMENT_PIN_DIGITS ? `${PAYMENT_PIN_DIGITS}자리를 넣어 주세요 (지금 ${pin.length}자리).`
+    : again && again !== pin ? "확인 칸과 다릅니다."
+    : null;
+  const ready = pin.length === PAYMENT_PIN_DIGITS && again === pin;
+
+  const act = async (fn: () => Promise<Profile>) => {
+    setBusy(true);
+    setFail(null);
+    try {
+      const p = await fn();
+      setPin("");
+      setAgain("");
+      onSaved(p);
+      onClose();
+    } catch (e) {
+      setFail(errText(e));
+      setBusy(false);
+    }
+  };
+
+  const field = (label: string, key: "pin" | "again", value: string, set: (v: string) => void, first = false) => (
+    <label>
+      {label}
+      <div className="pin-field">
+        <input
+          type={show[key] ? "text" : "password"} inputMode="numeric" autoComplete="off" autoFocus={first}
+          maxLength={PAYMENT_PIN_DIGITS} value={value} onChange={(e) => set(digitsOnly(e.target.value))}
+        />
+        <button
+          type="button" className="icon" title={show[key] ? "가리기" : "보기"}
+          onClick={() => setShow((s) => ({ ...s, [key]: !s[key] }))}
+        >{show[key] ? "🙈" : "👁"}</button>
+      </div>
+    </label>
+  );
+
+  return (
+    <div className="modal-back" onClick={onClose}>
+      <form
+        className="modal narrow-modal"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") onClose();
+        }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (ready && !busy) void act(() => aio.setProfilePin(profile.id, pin));
+        }}
+      >
+        <h2>결제 비밀번호</h2>
+        <div className="static"><SiteTag site={profile.site} /> {profile.name}{profile.memo && <span className="muted"> · {profile.memo}</span>}</div>
+        <p className="muted small modal-text">
+          지금 {profile.hasPaymentPin ? "저장돼 있습니다" : "없습니다"}. 그 계정의 간편결제 비밀번호 {PAYMENT_PIN_DIGITS}자리를 넣으세요.
+        </p>
+        {field("비밀번호", "pin", pin, setPin, true)}
+        {field("확인", "again", again, setAgain)}
+        {problem && <span className="err small">{problem}</span>}
+        {info && <p className="hint">이 프로필의 "결제 단계까지" 태스크가 {info.pin.effect}.</p>}
+        <p className="muted small modal-text">
+          암호화해서 이 프로필 폴더에만 저장합니다 (이 PC 의 이 윈도 계정에서만 풀립니다). 로그·화면에는 나오지 않고, 태스크를 띄울
+          때만 풀어 원본에 넘깁니다. 돌고 있는 태스크는 다시 시작할 때부터 씁니다.
+        </p>
+        {fail && <span className="err small">{fail}</span>}
+        <div className="modal-actions">
+          {profile.hasPaymentPin && (
+            <button
+              type="button" className="btn ghost" disabled={busy}
+              onClick={() => confirm(`'${profile.name}' 의 결제 비밀번호를 지울까요? 결제 단계에서 사람이 넣어야 합니다.`)
+                && void act(() => aio.clearProfilePin(profile.id))}
+            >지우기</button>
+          )}
+          <span className="grow" />
+          <button type="button" className="btn ghost" onClick={onClose}>취소</button>
+          <button type="submit" className="btn primary" disabled={!ready || busy}>저장</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+/** ▶ 를 눌렀는데 결제 비밀번호가 쓰일 태스크의 프로필에 비밀번호가 없다. 실패하는 것은 아니다 — 사람이 넣으면 된다. */
+function PinAskModal({ profile, onSetPin, onStart, onClose }: {
+  profile: Profile; onSetPin: () => void; onStart: () => void; onClose: () => void;
+}) {
+  return (
+    <div className="modal-back" onClick={onClose}>
+      <div className="modal narrow-modal" onClick={(e) => e.stopPropagation()}>
+        <h2>결제 비밀번호가 없습니다</h2>
+        <p className="modal-text">
+          '{profile.name}' 프로필에 결제 비밀번호가 설정되지 않았습니다. 이 태스크는 결제 단계까지 가므로, 그때 사람이 넣어야 합니다.
+        </p>
+        <div className="modal-actions">
+          <button type="button" className="btn ghost" onClick={onClose}>취소</button>
+          <button type="button" className="btn" onClick={onStart}>그래도 시작</button>
+          <button type="button" className="btn primary" autoFocus onClick={onSetPin}>결제 비밀번호 넣기</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1477,14 +1644,16 @@ function PinRow({ site, info, onSetPin, onShowLog }: {
   return (
     <div className="pin-box">
       <div className="account-row">
-        <span className="muted">간편결제 비밀번호 <span className="small">(이 사이트의 모든 프로필 공통 — 원본 설정 파일에 하나)</span></span>
+        <span className="muted">
+          콘솔용 간편결제 비밀번호 <span className="small">(원본을 직접 돌릴 때만 — 원본 설정 파일에 하나. 태스크는 프로필의 결제 비밀번호를 씁니다)</span>
+        </span>
         <b>{pin.digits ? `${pin.digits}자리 저장됨` : "없음"}</b>
         {pin.fromEnv && <span className="warn-text small">환경변수 {pin.fromEnv} 에서 옵니다 — 여기서 바꿔도 환경변수가 먼저 쓰입니다</span>}
         <span className="grow" />
         <button type="button" className="icon" title="로그 보기" onClick={onShowLog}>≡</button>
       </div>
       <p className="pin-effect small">
-        {pin.digits ? "지금" : "넣으면"} "결제 단계까지" 태스크가 {pin.effect}.
+        원본을 직접 "결제 단계까지" 로 돌리면 {pin.digits ? "지금" : "넣었을 때"} {pin.effect}.
       </p>
       <div className="account-actions">
         <input

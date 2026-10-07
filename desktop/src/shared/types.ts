@@ -177,6 +177,11 @@ export interface Profile {
   memo?: string;
   /** false 면 태스크 폼에서 고를 수 없다 (이미 고른 태스크는 그대로). 쓰는 중이면 끌 수 없다. */
   isActive: boolean;
+  /**
+   * 결제(간편결제) 비밀번호가 저장돼 있나. 값은 프로필 폴더의 payment-pin.enc 에 암호화돼 있고 (Electron safeStorage —
+   * 이 PC 의 이 Windows 계정에서만 풀린다), 화면에는 있는지 없는지만 온다. 태스크를 띄울 때만 풀어 환경변수로 넘긴다.
+   */
+  hasPaymentPin: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -232,9 +237,10 @@ export interface SiteInfo {
   seed: string;
   seedExists: boolean;
   /**
-   * 간편결제 비밀번호 (사이트 공통 — 원본 설정 파일에 하나다). 값은 원본 설정 파일에만 있고 여기에는
-   * 자릿수만 온다. 환경변수로 들어온 것이면 설정 파일보다 먼저 쓰인다 (원본이 그렇게 읽는다) — 화면에서
-   * 바꿔도 환경변수가 이긴다. effect 는 비밀번호를 넣으면 원본이 어디까지 가는지 (원본 배너와 같은 말).
+   * **콘솔용** 간편결제 비밀번호 (사이트 공통 — 원본 설정 파일에 하나다). 원본을 직접 돌릴 때만 쓰인다 — 태스크는
+   * 프로필의 결제 비밀번호를 쓴다 (Profile.hasPaymentPin). 값은 원본 설정 파일에만 있고 여기에는 자릿수만 온다.
+   * 환경변수로 들어온 것이면 설정 파일보다 먼저 쓰인다 (원본이 그렇게 읽는다). effect 는 비밀번호가 있으면 원본이
+   * 어디까지 가는지 (원본 배너와 같은 말) — 프로필 비밀번호에도 같은 말이 맞는다.
    */
   pin: { digits: number; fromEnv: string | null; effect: string };
   /** 이게 남아 있으면 태스크를 띄우지 않는다. */
@@ -244,10 +250,13 @@ export interface SiteInfo {
   /** 알아 둘 것. 설정 창에만 보인다. */
   notes: string[];
   /**
-   * "어디까지" 를 고르면 원본이 실제로 어디서 멈추나 (빈 값 = 씨앗 설정의 order_action).
-   * 씨앗 설정(간편결제 비밀번호·마지막 확인)에 따라 달라서 어댑터가 원본 배너와 같은 말로 만든다.
+   * "어디까지" 를 고르면 원본이 실제로 어디서 멈추나 (빈 값 = 씨앗 설정의 order_action). 프로필에 결제 비밀번호가
+   * 없을 때 / 있을 때. 씨앗 설정(마지막 확인)에 따라서도 달라서 어댑터가 원본 배너와 같은 말로 만든다.
    */
   actionHints: Partial<Record<OrderAction, string>>;
+  actionHintsWithPin: Partial<Record<OrderAction, string>>;
+  /** "어디까지" 를 비워 두면 원본이 가는 데 (씨앗 설정의 order_action). */
+  defaultAction: Exclude<OrderAction, "">;
   timing: TimingDefaults;
   webhook: WebhookInfo;
   /** 준비 명령(빌드·설치). 할 것이 없으면 null. */
@@ -424,8 +433,14 @@ export interface AioApi {
   logoutProfile(id: string): Promise<Profile>;
   /** 원본의 --whoami 로 로그인이 살아 있는지 묻는다. */
   verifyProfile(id: string): Promise<Profile>;
-  /** 원본의 --pin 으로 원본 설정 파일에 적는다 (사이트 공통). null 이면 지운다. */
+  /** 원본의 --pin 으로 원본 설정 파일에 적는다 (사이트 공통 · 콘솔용 — 태스크는 안 쓴다). null 이면 지운다. */
   setPin(site: SiteId, pin: string | null): Promise<SiteInfo[]>;
+  /**
+   * 프로필의 결제 비밀번호를 암호화해 프로필 폴더에 적는다 (숫자 6자리). 암호화를 쓸 수 없는 환경이면 거절한다 —
+   * 평문으로 대신 적지 않는다. 돌고 있는 태스크는 다시 시작할 때부터 새 비밀번호를 쓴다.
+   */
+  setProfilePin(id: string, pin: string): Promise<Profile>;
+  clearProfilePin(id: string): Promise<Profile>;
   /** 웹훅으로 시험 메시지를 보낸다. */
   testWebhook(url: string): Promise<{ ok: boolean; message: string }>;
   /** 태스크의 태스크 창을 연다 (이미 열려 있으면 앞으로). 여러 태스크의 창을 같이 열 수 있다. */

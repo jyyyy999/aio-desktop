@@ -152,6 +152,20 @@ export const FIELD_LABEL: Record<keyof TaskDef, string> = {
   monitorDurationMs: "감시 시간", stopOnSuccess: "사고 나면", maxBuys: "최대 몇 번", dropSettings: "드랍 설정",
 };
 
+/** 결제 비밀번호 자릿수. 두 원본 다 6자리를 기준으로 자판을 누른다 (다르면 경고만 하고 누른다 — 우리는 받지 않는다). */
+export const PAYMENT_PIN_DIGITS = 6;
+
+/** 사는 모드 — 구매 자리까지 갈 수 있는 것. 재고만·드라이런은 사지 않는다. */
+const BUYING_MODES: readonly TaskMode[] = ["watch", "once", "buy", "drop"];
+
+/**
+ * 이 태스크에 결제 비밀번호가 쓰이나 — 사는 모드이고, "어디까지" 가 결제 단계(submit)일 때 (비웠으면 씨앗 설정의
+ * order_action 을 따른다). 아니면 원본이 결제창 앞에서 멈추므로 비밀번호가 쓰일 자리가 없다.
+ */
+export function pinMatters(task: Pick<TaskDef, "mode" | "action">, defaultAction: Exclude<OrderAction, "">): boolean {
+  return BUYING_MODES.includes(task.mode) && (task.action || defaultAction) === "submit";
+}
+
 /** 로그인·세션 확인의 출력이 쌓이는 가짜 태스크 id. 프로필마다 따로 쌓인다. */
 export const LOGIN_LOG_PREFIX = "__login__:";
 export const loginLog = (profileId: string): string => `${LOGIN_LOG_PREFIX}${profileId}`;

@@ -212,14 +212,13 @@ function pinEffectOf(seed: JsonObject): string {
   return `결제하기 → 간편결제 비밀번호${steps.length ? ` → 마지막 확인(${steps.join(" → ")})` : ""}까지 누릅니다 — 사람 손 없이 결제됩니다`;
 }
 
-/** "어디까지" 마다 원본이 실제로 어디서 멈추나. 원본 order.ts 의 arrivalLine 과 같은 말이다. */
-function actionHints(seed: JsonObject): Partial<Record<OrderAction, string>> {
-  const pin = pinOf(seed);
+/** "어디까지" 마다 원본이 실제로 어디서 멈추나 (비밀번호가 있을 때 / 없을 때). 원본 order.ts 의 arrivalLine 과 같은 말이다. */
+function actionHints(seed: JsonObject, hasPin: boolean): Partial<Record<OrderAction, string>> {
   const steps = finishStepsOf(seed);
   const finish = steps.length ? ` → 마지막 확인(${steps.join(" → ")})` : "";
   const hints: Partial<Record<OrderAction, string>> = {
     open: "주문서까지만 갑니다 — 결제는 사람이 누릅니다",
-    submit: pin
+    submit: hasPin
       ? `결제하기 → 간편결제 비밀번호${finish}까지 누릅니다 — 사람 손 없이 결제됩니다`
       : "결제하기까지 누르고 인증 화면에서 멈춥니다 — 비밀번호는 사람이 넣습니다" +
         (steps.length ? `. 넣고 나면 마지막 확인(${steps.join(" → ")})은 원본이 눌러 줍니다` : ""),
@@ -266,21 +265,22 @@ export const naver: SiteAdapter = {
     if (!webhook.url) warnings.push("디스코드 웹훅이 없습니다 — 지켜보기·한 번만은 원본이 거절합니다 (드라이런·재고만·지금 구매는 됩니다).");
     if (!existsSync(s.seed)) notes.push("씨앗 설정이 없어 원본 기본값으로 돕니다.");
     notes.push(`씨앗 감시 간격 ${intervalOf(seed)}초 — 네이버 태스크를 같이 돌리면 요청이 더해집니다 (권장 ${NAVER_RATE.warn}회/분, 거부 ${NAVER_RATE.hard}회/분).`);
-    if (pin) notes.push("간편결제 비밀번호가 있습니다 — '결제 단계까지' 면 사람 손 없이 결제까지 끝납니다.");
+    if (pin) notes.push("원본 설정에 콘솔용 간편결제 비밀번호가 있습니다 — 원본을 직접 돌릴 때만 씁니다 (태스크는 프로필의 결제 비밀번호).");
     if (steps.length) {
       notes.push(`비밀번호 뒤 마지막 확인(${steps.join(" → ")})은 원본이 누릅니다 — 사람이 누르게 하려면 씨앗 설정의 buy.finish_steps 를 [] 로.`);
     }
     return {
       site: "naver", entry, entryExists: existsSync(entry), seed: s.seed, seedExists: existsSync(s.seed),
       pin: { digits: pin.length, fromEnv: pinSource(seed).fromEnv, effect: pinEffectOf(seed) },
-      problems, warnings, notes, actionHints: actionHints(seed), timing: timingOf(seed), webhook: webhook.info,
+      problems, warnings, notes, actionHints: actionHints(seed, false), actionHintsWithPin: actionHints(seed, true),
+      defaultAction: actionOf(seed), timing: timingOf(seed), webhook: webhook.info,
       prepare: hasTsx(s) ? null : "설치 (npm install)",
     };
   },
 
   webhookUrl: (s, common) => webhookOf(readJson(s.seed) ?? {}, s, common).url,
 
-  launch(task: TaskDef, home, s, common, profileDir) {
+  launch(task: TaskDef, home, s, common, profileDir, pin) {
     // 원본은 조회도 로그인한 브라우저로 한다 (Node fetch 는 429). 세션 없이는 어느 모드도 못 돈다.
     if (!profileDir) throw new Error("네이버 태스크는 로그인 프로필이 있어야 합니다.");
     mkdirSync(home, { recursive: true });
@@ -326,7 +326,8 @@ export const naver: SiteAdapter = {
       tsxFrom: s.root,
       args,
       // 공통 웹훅은 환경변수로도 넘긴다 — 원본이 환경변수를 설정 파일보다 먼저 본다.
-      env: { [PIN_ENV]: pinOf(seed), ...(common.webhook ? { [WEBHOOK_ENV]: common.webhook } : {}) },
+      // 비밀번호는 프로필 것, 없으면 빈 값 — 원본은 환경변수를 설정보다 먼저 보고, 태스크 설정의 buy.pg_password 는 비었다.
+      env: { [PIN_ENV]: pin, ...(common.webhook ? { [WEBHOOK_ENV]: common.webhook } : {}) },
       redirects: [
         [join(base, LOG), join(home, LOG)],
         [join(base, PG_DUMP), join(home, PG_DUMP)],

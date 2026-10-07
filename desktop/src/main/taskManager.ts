@@ -14,13 +14,14 @@
  *   - 아니면 다시 시작한다. 구매 중이거나 구매 창이 열려 있으면 그게 끝날 때까지 미룬다
  *
  * 로그인은 태스크가 고른 프로필(profileOf)의 것으로 돈다. 프로필 폴더를 어댑터에 넘기면 어댑터가
- * 원본에 넘길 꼴(롯데 쿠키 환경변수 · 네이버 세션 경로 돌리기)로 바꾼다.
+ * 원본에 넘길 꼴(롯데 쿠키 환경변수 · 네이버 세션 경로 돌리기)로 바꾼다. 결제 비밀번호도 그 프로필 것을 띄우기
+ * 직전에 풀어(pinOf) 환경변수로 넘긴다 — 없으면 빈 값.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { FIELD_LABEL, MODE_LABEL, planDrop, PREPARE_LOG, REPEATING_MODES, SITE_IDS, SITES, TIMING_BLANK } from "../shared/sites.js";
+import { FIELD_LABEL, MODE_LABEL, pinMatters, planDrop, PREPARE_LOG, REPEATING_MODES, SITE_IDS, SITES, TIMING_BLANK } from "../shared/sites.js";
 import type {
   CommonSettings, LogLine, MainMessage, Settings, SiteId, SiteInfo, TaskDef, TaskRuntime, WorkerMessage,
 } from "../shared/types.js";
@@ -147,6 +148,8 @@ export class TaskManager extends EventEmitter {
     private settings: Settings,
     /** 로그인 프로필을 찾는다 (SessionManager). 없으면 null. */
     private readonly profileOf: (id: string) => ProfileRef | null,
+    /** 그 프로필의 결제 비밀번호를 푼다 (SessionManager.paymentPin). 띄우기 직전에만 부른다. 없으면 "", 못 풀면 던진다. */
+    private readonly pinOf: (profileId: string) => string,
     /** 태스크 밖에서 사이트를 두드리는 것 (도는 모니터). 요청률 합과 "한 프로필에 하나" 에 같이 센다. */
     private readonly outside: () => LiveUse[] = () => [],
   ) {
@@ -512,10 +515,26 @@ export class TaskManager extends EventEmitter {
       this.push(id, "sys", `주의 — '${profile.name}' 프로필이 만료로 표시돼 있습니다. 원본이 세션을 거절하면 프로필 화면에서 다시 로그인하세요.`);
     }
 
+    // 결제 비밀번호는 프로필 것만 쓴다. 띄우기 직전에 풀어 환경변수로 넘기고 여기서는 들고 있지 않는다 (로그에는 자릿수만).
+    // 없으면 원본이 결제창·인증 화면에서 사람을 기다린다 — 실패가 아니다.
+    let pin = "";
+    if (profile?.hasPaymentPin) {
+      try {
+        pin = this.pinOf(profile.id);
+      } catch (e) {
+        this.push(id, "sys", `${(e as Error).message} 비밀번호 없이 띄웁니다.`);
+      }
+    }
+    if (pinMatters(task, info.defaultAction)) {
+      this.push(id, "sys", pin
+        ? `결제 비밀번호: '${profile!.name}' 프로필의 것 (${pin.length}자리)`
+        : "결제 비밀번호가 없습니다 — 결제 단계에서 사람이 넣어야 합니다.");
+    }
+
     const home = this.homeOf(id);
     let launch;
     try {
-      launch = adapter.launch(task, home, settings, this.common(), profile?.dir ?? null);
+      launch = adapter.launch(task, home, settings, this.common(), profile?.dir ?? null, pin);
     } catch (e) {
       this.push(id, "sys", `태스크 폴더를 준비하지 못했습니다: ${(e as Error).message}`);
       this.update(id, { status: "failed" });

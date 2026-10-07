@@ -2,7 +2,7 @@
  * Electron main. 창을 띄우고, 렌더러의 요청을 TaskManager 로 넘기고, 워커에서 올라온
  * 상태·로그를 렌더러로 흘린다. 여기에 태스크 상태를 따로 들고 있지 않는다.
  */
-import { app, BrowserWindow, dialog, ipcMain, screen, session, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, screen, session, shell } from "electron";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -12,7 +12,7 @@ import type {
 } from "../shared/types.js";
 import { MonitorManager } from "./monitorManager.js";
 import { MonitorStore } from "./monitorStore.js";
-import { SessionManager, type LoginWindows } from "./sessions.js";
+import { SessionManager, type LoginWindows, type PinVault } from "./sessions.js";
 import { isDiscordWebhook, sendFound, sendTest } from "./webhook.js";
 import { ADAPTERS } from "./sites/index.js";
 import { TaskManager } from "./taskManager.js";
@@ -351,6 +351,13 @@ const openLoginWindow: LoginWindows["open"] = (title, partition, spec, note) => 
   return { done, cancel: () => finish(null) };
 };
 
+/** 프로필의 결제 비밀번호를 잠그는 것. 윈도에서는 DPAPI — 이 PC 의 이 윈도 계정에서만 풀린다. */
+const pinVault: PinVault = {
+  available: () => safeStorage.isEncryptionAvailable(),
+  seal: (text) => safeStorage.encryptString(text),
+  open: (data) => safeStorage.decryptString(data),
+};
+
 const loginWindows: LoginWindows = {
   open: openLoginWindow,
   forget: (partition) => session.fromPartition(partition).clearStorageData(),
@@ -495,6 +502,9 @@ function registerIpc(): void {
     await sessions.setPin(site, pin);
     return m().sitesInfo();
   });
+  // 프로필의 결제 비밀번호. 값은 화면 → 여기 → 암호화해서 파일로만 간다. 돌려주는 것은 Profile (있나 없나만).
+  ipcMain.handle("aio:setProfilePin", (_e, id: string, pin: string) => sessions.setPaymentPin(id, String(pin ?? "")));
+  ipcMain.handle("aio:clearProfilePin", (_e, id: string) => sessions.clearPaymentPin(id));
   ipcMain.handle("aio:testWebhook", (_e, url: string) =>
     isDiscordWebhook(url)
       ? sendTest(url)
@@ -535,6 +545,7 @@ app.whenReady().then(() => {
     join(__dirname, "..", "worker", "worker.js"),
     loadSettings(),
     (id) => sessions.ref(id),
+    (profileId) => sessions.paymentPin(profileId),
     // 네이버 요청률 합·한 프로필에 하나 — 도는 모니터도 같이 센다.
     () => monitors.liveUses(),
   );
@@ -557,6 +568,7 @@ app.whenReady().then(() => {
     (site) => manager.settingsOf(site),
     loginWindows,
     (id, stream, text) => manager.appendLog(id, stream, text),
+    pinVault,
   );
   sessions.on("profile", (p: Profile) => {
     win?.webContents.send("aio:profile", p);

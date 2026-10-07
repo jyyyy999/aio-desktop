@@ -241,6 +241,10 @@ label.inline { display: flex; align-items: center; gap: 6px; font-size: 12px; co
 .modal .modal-field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; }
 .modal .static { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
 .modal .modal-text { margin: 0; }
+.profile-card .pin-line { display: flex; align-items: center; gap: 8px; }
+.pin-field { display: flex; gap: 6px; }
+.pin-field input { flex: 1; letter-spacing: 4px; }
+.pin-field .icon { width: 36px; height: auto; }
 
 /* ── 태스크 창 ─────────────────────────────────────────────────────── */
 .task-watch { height: 100%; display: flex; flex-direction: column; overflow-y: auto; }

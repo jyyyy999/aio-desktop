@@ -166,18 +166,22 @@ function timingFields(task: TaskDef): LotteTimingFields {
   return out;
 }
 
-/** "어디까지" 마다 원본이 실제로 어디서 멈추나. 원본 order.ts 의 arrivalLine 과 같은 말이다. */
-function actionHints(seed: JsonObject, pin: string): Partial<Record<OrderAction, string>> {
+/** 씨앗 설정의 order_action. 원본 actionOf: 기본 submit, 모르는 값이면 open. */
+function defaultActionOf(seed: JsonObject): Exclude<OrderAction, ""> {
+  const raw = String(seed["order_action"] ?? "submit").toLowerCase();
+  return LOTTE_ACTIONS.find((a) => a === raw) ?? "open";
+}
+
+/** "어디까지" 마다 원본이 실제로 어디서 멈추나 (비밀번호가 있을 때 / 없을 때). 원본 order.ts 의 arrivalLine 과 같은 말이다. */
+function actionHints(seed: JsonObject, hasPin: boolean): Partial<Record<OrderAction, string>> {
   const hints: Partial<Record<OrderAction, string>> = {
     open: "주문서까지만 갑니다 — 결제는 사람이 누릅니다",
     agree: "주문서에서 필수 동의까지 하고 멈춥니다",
-    submit: pin
+    submit: hasPin
       ? "결제창까지 띄우고 간편결제 비밀번호까지 누릅니다 — 결제 확정은 사람이 누릅니다"
-      : "결제창까지 띄웁니다 — 결제 확정은 사람이 누릅니다",
+      : "결제창까지 띄웁니다 — 비밀번호와 결제 확정은 사람이 누릅니다",
   };
-  // 원본 actionOf: 기본 submit, 모르는 값이면 open.
-  const raw = String(seed["order_action"] ?? "submit").toLowerCase();
-  const dflt = LOTTE_ACTIONS.find((a) => a === raw) ?? "open";
+  const dflt = defaultActionOf(seed);
   hints[""] = `씨앗 설정(${dflt}) — ${hints[dflt]}`;
   return hints;
 }
@@ -244,20 +248,21 @@ export const lotte: SiteAdapter = {
     if (!existsSync(entry)) problems.push(`원본 빌드가 없습니다 (${entry}) — '원본 빌드' 를 누르세요.`);
     if (!webhook.url) warnings.push("디스코드 웹훅이 없습니다 — '결제해 주세요' 알림이 안 갑니다 (설정에서 공통 웹훅을 넣으세요).");
     if (!existsSync(s.seed)) notes.push("씨앗 설정이 없어 원본 기본값으로 돕니다.");
-    if (pin) notes.push("간편결제 비밀번호가 있습니다 — 원본이 결제창 안까지 넣습니다.");
+    if (pin) notes.push("원본 설정에 콘솔용 간편결제 비밀번호가 있습니다 — 원본을 직접 돌릴 때만 씁니다 (태스크는 프로필의 결제 비밀번호).");
     return {
       site: "lotte", entry, entryExists: existsSync(entry), seed: s.seed, seedExists: existsSync(s.seed),
       pin: { digits: pin.length, fromEnv, effect: PIN_EFFECT }, problems, warnings, notes,
-      actionHints: actionHints(readJson(s.seed) ?? {}, pin), timing: timingOf(readJson(s.seed) ?? {}), webhook: webhook.info,
+      actionHints: actionHints(readJson(s.seed) ?? {}, false), actionHintsWithPin: actionHints(readJson(s.seed) ?? {}, true),
+      defaultAction: defaultActionOf(readJson(s.seed) ?? {}), timing: timingOf(readJson(s.seed) ?? {}), webhook: webhook.info,
       prepare: "원본 빌드 (npm run build)",
     };
   },
 
   webhookUrl: (s, common) => webhookOf(s, common).url,
 
-  launch(task: TaskDef, home, s, common, profileDir) {
+  launch(task: TaskDef, home, s, common, profileDir, pin) {
     // 씨앗 설정을 그대로 베끼되 **대상만 이 태스크의 상품 하나로** 바꾼다. 쿠키·비밀번호는
-    // 비워 둔다 (환경변수로 간다). 산 기록은 건드리지 않는다 — 지우려면 resetState.
+    // 비워 둔다 (환경변수로 간다 — 비밀번호는 씨앗의 콘솔용이 아니라 프로필 것). 산 기록은 건드리지 않는다.
     mkdirSync(home, { recursive: true });
     const target = targetOf(task);
     const webhook = webhookOf(s, common).url;
@@ -289,7 +294,8 @@ export const lotte: SiteAdapter = {
       args,
       // AIO_TTY: 원본은 기다리는 동안 "품절 · 다음 확인 3초" 를 제자리에서 고쳐 쓰는데, 화면(TTY)일 때만
       // 찍는다 (ui.ts). 워커가 표준출력을 화면처럼 보이게 해서 그 줄을 받는다 — 모니터링 창의 회차·남은 초.
-      env: { LOTTEON_HOME: home, LOTTEON_COOKIE: cookie, LOTTEON_PG_PASSWORD: pinOf(s).pin, AIO_TTY: "1" },
+      // 비밀번호는 프로필 것, 없으면 빈 값 — 원본은 환경변수를 설정보다 먼저 보고, 태스크 설정의 pg_password 는 비었다.
+      env: { LOTTEON_HOME: home, LOTTEON_COOKIE: cookie, LOTTEON_PG_PASSWORD: pin, AIO_TTY: "1" },
       redirects: [],
     };
   },

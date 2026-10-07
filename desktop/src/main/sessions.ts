@@ -20,7 +20,7 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { loginLog, SITE_IDS, SITES, siteLog } from "../shared/sites.js";
+import { loginLog, PAYMENT_PIN_DIGITS, SITE_IDS, SITES, siteLog } from "../shared/sites.js";
 import type { LogLine, MainMessage, Profile, ProfilePatch, SiteId, SiteSettings, WorkerMessage } from "../shared/types.js";
 import { eachLine, forkLegacy } from "./legacy.js";
 import { ADAPTERS, type Launch, type WindowLogin } from "./sites/index.js";
@@ -32,6 +32,20 @@ export interface LoginWindows {
   /** 창의 저장소를 비운다 (로그아웃 · 프로필 지우기). 다음 로그인 창이 로그인 안 된 채로 열린다. */
   forget(partition: string): Promise<void>;
 }
+
+/**
+ * 결제 비밀번호를 잠그고 푸는 것 (Electron safeStorage — 윈도에서는 DPAPI, 이 PC 의 이 윈도 계정에서만 풀린다).
+ * main 이 넣어 준다.
+ */
+export interface PinVault {
+  /** 암호화를 쓸 수 있나. 못 쓰면 비밀번호를 받지 않는다 — 평문으로 대신 적지 않는다. */
+  available(): boolean;
+  seal(text: string): Buffer;
+  open(data: Buffer): string;
+}
+
+/** 프로필 폴더의 결제 비밀번호 (암호화된 바이트). 있으면 Profile.hasPaymentPin. */
+const PIN_FILE = "payment-pin.enc";
 
 /** meta.json 에 적는 것. 화면에 가는 Profile 은 여기에 어댑터가 아는 것(파일 위치·확인 방법)을 붙인 것이다. */
 type Meta = Pick<Profile, "id" | "site" | "name" | "memo" | "loginStatus" | "statusNote" | "lastLoginAt" | "lastCheckedAt" | "isActive" | "createdAt" | "updatedAt">;
@@ -52,6 +66,8 @@ export interface ProfileRef {
   loginStatus: Profile["loginStatus"];
   /** 로그인 정보 파일이 있나 (살아 있는지는 모른다). */
   hasLogin: boolean;
+  /** 결제 비밀번호가 저장돼 있나. 값은 SessionManager.paymentPin 으로 띄우기 직전에만 푼다. */
+  hasPaymentPin: boolean;
 }
 
 /** 원본 명령을 멈추라고 한 뒤 이만큼 기다려도 안 끝나면 죽인다. */
@@ -85,6 +101,7 @@ export class SessionManager extends EventEmitter {
     private readonly settingsOf: (site: SiteId) => SiteSettings,
     private readonly windows: LoginWindows,
     private readonly log: (id: string, stream: LogLine["stream"], text: string) => void,
+    private readonly vault: PinVault,
   ) {
     super();
     this.metas = this.load();
@@ -281,6 +298,7 @@ export class SessionManager extends EventEmitter {
       ...(expiry ? { sessionExpiry: expiry } : {}),
       cookiesPath: a.store(dir),
       sessionCheck: a.check,
+      hasPaymentPin: existsSync(join(dir, PIN_FILE)),
     };
   }
 
@@ -296,7 +314,10 @@ export class SessionManager extends EventEmitter {
     const m = this.metas.find((one) => one.id === id);
     if (!m) return null;
     const dir = this.dirOf(id);
-    return { id, name: m.name, site: m.site, dir, loginStatus: this.view(m).loginStatus, hasLogin: ADAPTERS[m.site].session.has(dir) };
+    return {
+      id, name: m.name, site: m.site, dir, loginStatus: this.view(m).loginStatus, hasLogin: ADAPTERS[m.site].session.has(dir),
+      hasPaymentPin: existsSync(join(dir, PIN_FILE)),
+    };
   }
 
   /** 상태를 고쳐 적고 알린다. 그 사이에 지워진 프로필이면 아무것도 안 한다. */
@@ -381,6 +402,63 @@ export class SessionManager extends EventEmitter {
   private async forgetWindow(m: Meta): Promise<void> {
     const login = ADAPTERS[m.site].session.login;
     if (login.kind === "window") await this.windows.forget(login.partition(m.id)).catch(() => undefined);
+  }
+
+  // ── 결제 비밀번호 ───────────────────────────────────────────────────────
+  //
+  // 프로필마다 하나 — 간편결제 비밀번호는 계정의 것이라, 사이트 공통으로 두면 다른 계정의 태스크가 그 비밀번호를
+  // 자판에 누른다 (몇 번 틀리면 결제 수단이 잠긴다). 값은 로그·화면·JSON 어디에도 내지 않고 자릿수만 적는다.
+  // 로그아웃해도 남는다 (로그인 세션과 따로다). 프로필을 지우면 폴더째 지워진다.
+
+  private pinPath(id: string): string {
+    return join(this.dirOf(id), PIN_FILE);
+  }
+
+  setPaymentPin(id: string, raw: string): Profile {
+    this.metaOf(id);
+    const digits = String(raw ?? "");
+    if (!/^\d+$/.test(digits)) throw new Error("결제 비밀번호는 숫자만 받습니다.");
+    if (digits.length !== PAYMENT_PIN_DIGITS) {
+      throw new Error(`결제 비밀번호는 ${PAYMENT_PIN_DIGITS}자리입니다 (넣은 것은 ${digits.length}자리) — 두 원본 다 ${PAYMENT_PIN_DIGITS}자리로 누릅니다.`);
+    }
+    if (!this.vault.available()) {
+      throw new Error("이 PC 에서는 암호화 저장을 쓸 수 없어 저장하지 않습니다 (평문으로는 적지 않습니다).");
+    }
+    const path = this.pinPath(id);
+    mkdirSync(this.dirOf(id), { recursive: true });
+    // 반쯤 쓰인 파일이 남지 않게 옆에 쓰고 바꿔치기한다.
+    writeFileSync(`${path}.tmp`, this.vault.seal(digits));
+    renameSync(`${path}.tmp`, path);
+    this.log(loginLog(id), "sys", `결제 비밀번호를 암호화해 저장했습니다 (${digits.length}자리). 돌고 있는 태스크는 다시 시작할 때부터 씁니다.`);
+    this.set(id, {});
+    return this.get(id);
+  }
+
+  clearPaymentPin(id: string): Profile {
+    this.metaOf(id);
+    rmSync(this.pinPath(id), { force: true });
+    this.log(loginLog(id), "sys", "결제 비밀번호를 지웠습니다 — 결제 단계에서 사람이 넣어야 합니다.");
+    this.set(id, {});
+    return this.get(id);
+  }
+
+  /**
+   * 태스크를 띄우기 직전에만 부른다 (TaskManager). 없으면 "". 풀지 못하면 던진다 — 다른 윈도 계정·다른 PC 에서
+   * 옮겨 온 파일이면 DPAPI 가 풀지 못한다. 돌려준 값을 여기서 들고 있지 않는다.
+   */
+  paymentPin(id: string): string {
+    let sealed: Buffer;
+    try {
+      sealed = readFileSync(this.pinPath(id));
+    } catch {
+      return "";
+    }
+    if (!this.vault.available()) throw new Error("이 PC 에서는 암호화를 쓸 수 없어 결제 비밀번호를 풀지 못했습니다.");
+    try {
+      return this.vault.open(sealed);
+    } catch {
+      throw new Error("결제 비밀번호를 풀지 못했습니다 (다른 윈도 계정이나 PC 에서 저장한 것일 수 있습니다) — 프로필 화면에서 다시 넣으세요.");
+    }
   }
 
   // ── 원본 명령 ───────────────────────────────────────────────────────────
@@ -517,8 +595,9 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * 간편결제 비밀번호를 원본 설정 파일에 적는다 (null 이면 지운다). 사이트 공통이다 — 원본 --pin 이 적는
-   * 자리와 같아서 콘솔에서 넣은 것과 한 곳이다. 값은 로그에 남기지 않는다 (원본도 자릿수만 적는다).
+   * **콘솔용** 간편결제 비밀번호를 원본 설정 파일에 적는다 (null 이면 지운다). 사이트 공통이다 — 원본 --pin 이 적는
+   * 자리와 같아서 콘솔에서 넣은 것과 한 곳이다. 태스크는 이것을 쓰지 않는다 (프로필의 결제 비밀번호를 쓴다).
+   * 값은 로그에 남기지 않는다 (원본도 자릿수만 적는다).
    */
   async setPin(site: SiteId, raw: string | null): Promise<void> {
     const a = ADAPTERS[site].session.pin;
