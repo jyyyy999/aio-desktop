@@ -475,6 +475,20 @@ export async function watch(
     if (paused > 0) log.info(`${paused} paused task(s) skipped — see "task list"`);
   }
 
+  // 지켜볼 것이 하나도 없으면 **크롬을 띄우기 전에** 끝낸다. 전에는 크롬을 띄우고 사전 로그인까지 한 뒤에야
+  // 첫 바퀴에서 "모두 끝났습니다" 로 끝나서, 로그인된 창만 남고 멈춘 것처럼 보였다 (2026-10-07 — --buy 로 산
+  // 기록이 남은 상품을 지켜보기로 켰다). 기록을 지우지는 않는다 — 산 것을 또 사게 된다.
+  const pending = entries.filter((t) => !state.targets?.[t.gno]?.done);
+  if (!pending.length && !(cfg.discover ?? []).length) {
+    for (const t of entries) {
+      const e = state.targets?.[t.gno];
+      log.warn(`[${t.gno}] ${t.label || e?.name || ""} — 이미 담은 기록이 있습니다 (${e?.carted_at || "시각 미상"}). ` +
+        "지켜볼 것이 없어 크롬을 띄우지 않고 끝냅니다");
+    }
+    log.warn("다시 지켜보려면 담은 기록을 지우세요 — --reset (데스크톱 앱: 로그 패널의 '산 기록 지우기')");
+    return;
+  }
+
   let limit = cfg.max_carts_per_run ?? 5;
   let checkEvery = cfg.session_check_minutes ?? 10;
   let stamp = configStamp();
