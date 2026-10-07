@@ -49,8 +49,6 @@ export const STATUS_LABEL: Record<string, string> = { [IN_STOCK]: "구매 가능
 const GNO_RE = /(\d{4,})/;
 const DETAIL_STATE_RE = /class="type basic\s+([A-Za-z]+)"/;
 const GOODS_KIND_RE = /var\s+goodsKind\s*=\s*'(\d+)'/;
-// 옵션 상품. 옵션마다 재고가 따로라 상품 단위로 담으면 엉뚱한 걸 사게 된다.
-const OPTION_GOODS_KIND = "200";
 
 export interface Stock { stock: number; price: number; event_discount: number }
 
@@ -146,10 +144,15 @@ export async function fetchGoods(s: Session, gno: string): Promise<Goods> {
 
   const state = DETAIL_STATE_RE.exec(html)?.[1];
   const goodsKind = GOODS_KIND_RE.exec(html)?.[1] ?? "";
+  // 옵션 상품: 옵션마다 재고가 따로라 상품 단위로 담으면 엉뚱한 걸 사게 된다.
+  //
   // 옵션 판정에 문자열 검색을 쓰면 안 된다 — 페이지 스크립트 본문에 늘
   // select[name=xoption] 을 고르는 줄이 들어 있어 옵션 없는 상품도 걸린다. 트리에서 센다.
-  const hasOption =
-    goodsKind === OPTION_GOODS_KIND || form.querySelectorAll('select[name="xoption"]').length > 0;
+  //
+  // goodsKind 로 판정하지 않는다. '200' 인데 옵션 칸이 없는 상품이 있다 (2026-10-07, gno 9794205
+  // S.H.피규아트 — 폼에 xoption 이 없고, 사이트가 담을 때 보내는 값도 일반 상품과 같다). 사이트
+  // 스크립트는 xoption 칸을 읽기만 하고 만들지 않으니, 옵션이 있으면 그 칸이 폼에 박혀 온다.
+  const hasOption = form.querySelectorAll('select[name="xoption"]').length > 0;
 
   return {
     gno,
