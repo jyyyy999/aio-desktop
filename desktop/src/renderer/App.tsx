@@ -41,13 +41,25 @@ export const LOGIN_LABEL: Record<LoginStatus, string> = {
 type View = "tasks" | "monitors" | "profiles";
 
 /** 새 태스크가 처음 고를 프로필 — 그 사이트에서 로그인된 것, 없으면 아무거나. */
+/**
+ * 이 태스크의 결제 비밀번호가 어느 프로필에서 오나 (main TaskManager.launch 와 같은 순서). 결제창 로그인 프로필
+ * (반다이남코 네이버페이 → 네이버 프로필)이 먼저다 — 네이버페이 비밀번호는 네이버 계정의 것이다.
+ *   from  비밀번호를 줄 프로필. 없으면 null
+ *   ask   비밀번호가 없을 때 넣으라고 할 프로필 (결제창 로그인 프로필이 있으면 그것)
+ */
+function pinSource(t: TaskDef, profiles: Profile[]): { from: Profile | null; ask: Profile | null } {
+  const login = profiles.find((p) => p.id === t.profileId) ?? null;
+  const pay = SITES[t.site].payProfileSite ? profiles.find((p) => p.id === t.payProfileId) ?? null : null;
+  return { from: pay?.hasPaymentPin ? pay : login?.hasPaymentPin ? login : null, ask: pay ?? login };
+}
+
 function defaultProfile(profiles: Profile[], site: SiteId): string | undefined {
   const mine = profiles.filter((p) => p.site === site && p.isActive);
   return (mine.find((p) => p.loginStatus === "logged_in") ?? mine[0])?.id;
 }
 
 /**
- * 이 태스크의 로그인에 걸리는 것 (배너·표에 한 줄). 프로필이 없거나 지워졌으면 TaskManager 가 띄우지 않고,
+ * 이 태스크의 로그인에 걸리는 것 (알림 🔔·표에 한 줄). 프로필이 없거나 지워졌으면 TaskManager 가 띄우지 않고,
  * 미로그인·만료면 원본이 세션을 거절한다. 문제가 없으면 null.
  */
 function loginIssue(t: TaskDef, profiles: Profile[]): string | null {
@@ -72,11 +84,12 @@ function profileUsers(
 ): string[] {
   const out: string[] = [];
   tasks.forEach((t, i) => {
-    if (t.profileId !== profileId || t.id === opts.except) return;
+    const pay = t.payProfileId === profileId;
+    if ((t.profileId !== profileId && !pay) || t.id === opts.except) return;
     const status = runtimes[t.id]?.status ?? "idle";
     const live = LIVE.includes(status);
     if (!live && !(opts.scheduled && status === "scheduled")) return;
-    out.push(`태스크 #${String(i + 1).padStart(2, "0")} ${t.label || SITES[t.site].productCode(t.url)}${live ? "" : " (예약)"}`);
+    out.push(`태스크 #${String(i + 1).padStart(2, "0")} ${t.label || SITES[t.site].productCode(t.url)}${pay ? " (결제 로그인)" : ""}${live ? "" : " (예약)"}`);
   });
   for (const m of monitors) {
     if (m.def.profileId === profileId && MONITOR_LIVE.includes(m.state.status)) out.push(`모니터 ${m.def.name}`);
@@ -115,10 +128,10 @@ export function when(iso: string | undefined): string {
 
 type Filter = SiteId | "all";
 
-function blankTask(site: SiteId, profileId: string | undefined): TaskDef {
+function blankTask(site: SiteId, profileId: string | undefined, payProfileId?: string): TaskDef {
   return {
     id: crypto.randomUUID().slice(0, 8),
-    site, ...(profileId ? { profileId } : {}), label: "", url: "", option: "", ea: 1, max_price: 0, mode: "watch", action: "",
+    site, ...(profileId ? { profileId } : {}), ...(payProfileId ? { payProfileId } : {}), label: "", url: "", option: "", ea: 1, max_price: 0, mode: "watch", action: "",
     ...TIMING_BLANK,
   };
 }
@@ -308,7 +321,7 @@ export function App() {
   };
 
   const removeTask = async (t: TaskDef) => {
-    if (!confirm(`'${t.label || SITES[t.site].productCode(t.url)}' 태스크를 지울까요? (돌고 있으면 멈춥니다)`)) return;
+    if (!(await aio.ask(`'${t.label || SITES[t.site].productCode(t.url)}' 태스크를 지울까요? (돌고 있으면 멈춥니다)`))) return;
     setTasks(await aio.deleteTask(t.id));
     if (selected === t.id) setSelected(null);
   };
@@ -330,10 +343,10 @@ export function App() {
     void aio.loginProfile(id).catch(() => undefined);
   };
 
-  // 태스크의 로그인에 걸리는 것 (프로필이 없다·만료 …). 사이트마다 모아 배너에 올린다.
+  // 태스크의 로그인에 걸리는 것 (프로필이 없다·만료 …). 사이트마다 모아 알림(🔔)에 올린다.
   const issues = tasks.map((t) => ({ t, issue: loginIssue(t, profiles) })).filter((x) => x.issue);
   const issueLines = (site: SiteId) => [...new Set(issues.filter((x) => x.t.site === site).map((x) => x.issue!))];
-  // 태스크가 있는 사이트만 배너에 올린다. 안 쓰는 사이트의 준비 상태로 화면을 덮지 않는다.
+  // 태스크가 있는 사이트만 알림에 올린다. 안 쓰는 사이트의 준비 상태로 알림을 채우지 않는다.
   const alerts = infos.filter((i) => perSite(i.site) > 0 && (i.problems.length || i.warnings.length || issueLines(i.site).length));
   const selectedTask = tasks.find((t) => t.id === selected);
   const selectedProfile = selected?.startsWith(LOGIN_LOG_PREFIX) ? profiles.find((p) => loginLog(p.id) === selected) : undefined;
@@ -351,9 +364,9 @@ export function App() {
    * "전부 시작" 은 묻지 않는다 — main 이 태스크 로그에 적는다.
    */
   const startOne = (t: TaskDef) => {
-    const p = profileOf(t.profileId);
+    const { from, ask } = pinSource(t, profiles);
     const info = infos.find((i) => i.site === t.site);
-    if (p && !p.hasPaymentPin && info && pinMatters(t, info.defaultAction)) return setPinAsk({ task: t, profile: p });
+    if (!from && ask && info && pinMatters(t, info.defaultAction)) return setPinAsk({ task: t, profile: ask });
     void aio.start(t.id);
   };
   const pinProfile = profileOf(pinFor ?? undefined);
@@ -373,40 +386,21 @@ export function App() {
         <div className="actions">
           <button className="btn primary" onClick={() => {
             const site = filter === "all" ? "lotte" : filter;
-            setEditing(blankTask(site, defaultProfile(profiles, site)));
+            const paySite = SITES[site].payProfileSite;
+            setEditing(blankTask(site, defaultProfile(profiles, site), paySite ? defaultProfile(profiles, paySite) : undefined));
           }}>+ 태스크</button>
           <button className="btn go" disabled={!tasks.length} onClick={() => void aio.startAll()}>▶ 전부 시작</button>
           <button className="btn stop" disabled={!counts.live && !counts.scheduled} onClick={() => void aio.stopAll()}>■ 전부 멈춤</button>
           <button className="btn ghost" onClick={() => setSettingsOpen(true)}>설정</button>
+          <NoticeBell
+            alerts={alerts} issueLines={issueLines} preparing={preparing}
+            onPrepare={(site) => void prepare(site)} onProfiles={view === "profiles" ? null : () => setView("profiles")}
+          />
         </div>
       </header>
 
       <FoundAlerts alerts={foundAlerts} monitors={monitors} profiles={profiles} onSwitched={onSwitched} onDismiss={dismissFound} />
 
-      {alerts.length > 0 && (
-        <div className="banner">
-          {alerts.map((info) => {
-            const lines = issueLines(info.site);
-            return (
-              <div key={info.site} className="banner-site">
-                <SiteTag site={info.site} />
-                <div className="banner-lines">
-                  {[...info.problems, ...info.warnings].map((p) => <span key={p}>{p}</span>)}
-                  {lines.length > 0 && <span>로그인이 필요한 태스크가 있습니다 — {lines.join(" · ")}</span>}
-                </div>
-                {info.problems.length > 0 && info.prepare && (
-                  <button className="btn small" disabled={preparing !== null} onClick={() => void prepare(info.site)}>
-                    {preparing === info.site ? "하는 중…" : info.prepare}
-                  </button>
-                )}
-                {lines.length > 0 && view !== "profiles" && (
-                  <button className="btn small" onClick={() => setView("profiles")}>프로필 화면</button>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
 
       <div className="body">
         <nav className="sidebar">
@@ -593,7 +587,10 @@ export function App() {
                       className="btn small ghost"
                       disabled={LIVE.includes(rtOf(selectedTask.id).status)}
                       title="원본의 --reset 과 같습니다 — 산 기록·쉬는 기록(쿨다운)을 지웁니다. 돌고 있으면 멈춘 뒤 누르세요"
-                      onClick={() => confirm("이 태스크의 산 기록·쉬는 기록을 지울까요? (원본의 --reset)\n다음 실행에서 쉬지 않고 바로 다시 보고, 산 것도 다시 삽니다.") && void aio.resetState(selectedTask.id)}
+                      onClick={() => {
+                        const id = selectedTask.id;
+                        void aio.ask("이 태스크의 산 기록·쉬는 기록을 지울까요? (원본의 --reset)\n다음 실행에서 쉬지 않고 바로 다시 보고, 산 것도 다시 삽니다.").then((ok) => { if (ok) void aio.resetState(id); });
+                      }}
                     >
                       기록 지우기 (--reset)
                     </button>
@@ -648,6 +645,88 @@ export function App() {
             refreshInfo();
           }}
         />
+      )}
+    </div>
+  );
+}
+
+/**
+ * 상단 바 오른쪽의 알림 (🔔). 사이트마다 원본 준비 문제·경고와 로그인이 필요한 태스크를 모아 둔다. 예전에는 상단 배너로
+ * 늘 펼쳐져 화면을 밀어냈다 — 이제는 개수만 보이고 눌러야 펼친다. 막는 문제(problems — 태스크를 안 띄운다)가 있으면
+ * 배지가 빨갛다. 바깥을 누르거나 Esc 로 닫는다. 재고 발견 알림(FoundAlerts)은 급한 것이라 여기 넣지 않는다.
+ */
+function NoticeBell({ alerts, issueLines, preparing, onPrepare, onProfiles }: {
+  alerts: SiteInfo[];
+  issueLines: (site: SiteId) => string[];
+  preparing: SiteId | null;
+  onPrepare: (site: SiteId) => void;
+  /** 프로필 화면으로. 이미 거기 있으면 null. */
+  onProfiles: (() => void) | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const count = alerts.reduce((n, i) => n + i.problems.length + i.warnings.length + (issueLines(i.site).length ? 1 : 0), 0);
+  const blocking = alerts.some((i) => i.problems.length > 0);
+
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: MouseEvent) => {
+      if (box.current && !box.current.contains(e.target as Node)) setOpen(false);
+    };
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [open]);
+
+  return (
+    <div className="notice" ref={box}>
+      <button
+        type="button" className={`btn ghost notice-btn ${open ? "on" : ""}`} onClick={() => setOpen(!open)}
+        title={count ? `알림 ${count}개` : "알림 없음"}
+      >
+        🔔{count > 0 && <span className={`notice-count ${blocking ? "bad" : ""}`}>{count}</span>}
+      </button>
+      {open && (
+        <div className="notice-pop">
+          <div className="notice-head">
+            <b>알림</b>
+            <span className="muted small">{count ? `${count}개` : ""}</span>
+            <span className="grow" />
+            <button type="button" className="icon" title="닫기" onClick={() => setOpen(false)}>✕</button>
+          </div>
+          {!alerts.length && <div className="muted notice-empty">알림이 없습니다.</div>}
+          {alerts.map((info) => {
+            const lines = issueLines(info.site);
+            return (
+              <div key={info.site} className="notice-site">
+                <div className="notice-site-head">
+                  <SiteTag site={info.site} /> <b>{SITES[info.site].name}</b>
+                </div>
+                <ul className="notice-lines">
+                  {info.problems.map((p) => <li key={p} className="bad">{p}</li>)}
+                  {info.warnings.map((p) => <li key={p}>{p}</li>)}
+                  {lines.length > 0 && <li>로그인이 필요한 태스크가 있습니다 — {lines.join(" · ")}</li>}
+                </ul>
+                <div className="notice-actions">
+                  {info.problems.length > 0 && info.prepare && (
+                    <button type="button" className="btn small" disabled={preparing !== null} onClick={() => onPrepare(info.site)}>
+                      {preparing === info.site ? "하는 중…" : info.prepare}
+                    </button>
+                  )}
+                  {lines.length > 0 && onProfiles && (
+                    <button type="button" className="btn small" onClick={() => { setOpen(false); onProfiles(); }}>프로필 화면</button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );
@@ -716,10 +795,10 @@ function TaskForm({ task, infos, live, profiles, usersOf, onLogin, onUpsertProfi
   const valid = spec.isProductUrl(t.url);
   /** 고른 "어디까지" 에서 원본이 실제로 어디서 멈추나 — 씨앗 설정(비밀번호·마지막 확인)에 따라 다르다. */
   const info = infos.find((i) => i.site === t.site);
-  // 결제 비밀번호는 고른 프로필의 것 — 있으면 원본이 자판까지 누른다.
-  const picked = profiles.find((p) => p.id === t.profileId);
-  const hint = (picked?.hasPaymentPin ? info?.actionHintsWithPin : info?.actionHints)?.[t.action];
-  const noPin = !!picked && !picked.hasPaymentPin && !!info && pinMatters(t, info.defaultAction);
+  // 결제 비밀번호는 고른 프로필의 것 (결제창 로그인 프로필이 먼저) — 있으면 원본이 자판까지 누른다.
+  const { from: pinFrom, ask: pinAsk } = pinSource(t, profiles);
+  const hint = (pinFrom ? info?.actionHintsWithPin : info?.actionHints)?.[t.action];
+  const noPin = !pinFrom && !!pinAsk && !!info && pinMatters(t, info.defaultAction);
   const timingError = info ? checkTiming(t, info.timing).error : null;
   // 저장은 프로필이 없을 때만 막는다. 로그인이 안 된 프로필은 고를 수 있다 — 띄우기 전에 로그인하면 된다.
   const profileError = !t.profileId
@@ -732,12 +811,15 @@ function TaskForm({ task, infos, live, profiles, usersOf, onLogin, onUpsertProfi
    */
   const setSite = (site: SiteId) =>
     setT((prev) => {
-      const { profileId: _other, ...rest } = prev;
+      const { profileId: _other, payProfileId: _pay, ...rest } = prev;
       const profileId = prev.site === site ? prev.profileId : defaultProfile(profiles, site);
+      const paySite = SITES[site].payProfileSite;
+      const payProfileId = !paySite ? undefined : prev.site === site ? prev.payProfileId : defaultProfile(profiles, paySite);
       return {
         ...rest,
         site,
         ...(profileId ? { profileId } : {}),
+        ...(payProfileId ? { payProfileId } : {}),
         action: prev.action && (SITES[site].actions as readonly string[]).includes(prev.action) ? prev.action : "",
         // 드랍(--drop)은 롯데 원본에만 있다.
         mode: SITES[site].modes.includes(prev.mode) ? prev.mode : "watch",
@@ -777,6 +859,12 @@ function TaskForm({ task, infos, live, profiles, usersOf, onLogin, onUpsertProfi
           t={t} profiles={profiles} usersOf={usersOf} error={profileError}
           onPick={(id) => set("profileId", id)} onLogin={onLogin} onCreated={onUpsertProfile}
         />
+        {spec.payProfileSite && (
+          <PayProfilePicker
+            t={t} site={spec.payProfileSite} profiles={profiles} onLogin={onLogin}
+            onPick={(id) => setT(({ payProfileId: _old, ...rest }) => ({ ...rest, ...(id ? { payProfileId: id } : {}) }))}
+          />
+        )}
         <label>
           상품 주소
           <input autoFocus value={t.url} placeholder={spec.placeholder} onChange={(e) => setUrl(e.target.value)} />
@@ -818,7 +906,7 @@ function TaskForm({ task, infos, live, profiles, usersOf, onLogin, onUpsertProfi
         {hint && (
           <p className="hint">
             {hint}
-            {noPin && ` — '${picked!.name}' 프로필에 결제 비밀번호가 없어 결제 단계에서 사람이 넣어야 합니다 (프로필 화면에서 넣을 수 있습니다).`}
+            {noPin && ` — '${pinAsk!.name}' 프로필에 결제 비밀번호가 없어 결제 단계에서 사람이 넣어야 합니다 (프로필 화면에서 넣을 수 있습니다).`}
           </p>
         )}
         {t.mode === "drop" && info?.timing.drop && (
@@ -835,6 +923,52 @@ function TaskForm({ task, infos, live, profiles, usersOf, onLogin, onUpsertProfi
 }
 
 const NEW_PROFILE = "__new__";
+
+/**
+ * 결제창 로그인 프로필 (sites.ts 의 payProfileSite). 반다이남코 네이버페이는 결제창에서 네이버에 로그인해야 한다 —
+ * 네이버 프로필을 고르면 그 세션을 원본 크롬에 같이 심는다. 고르지 않으면 원본이 결제 전에 로그인 창을 띄우고 사람을 기다린다.
+ */
+function PayProfilePicker({ t, site, profiles, onPick, onLogin }: {
+  t: TaskDef; site: SiteId; profiles: Profile[]; onPick: (id: string | undefined) => void; onLogin: (id: string) => void;
+}) {
+  const mine = profiles.filter((p) => p.site === site);
+  const choices = mine.filter((p) => p.isActive || p.id === t.payProfileId);
+  const picked = mine.find((p) => p.id === t.payProfileId);
+  const gone = !!t.payProfileId && !picked;
+  return (
+    <div className="picker">
+      <label>
+        {SITES[site].name}페이 로그인 <span className="muted">(결제창에서 쓸 {SITES[site].name} 프로필)</span>
+        <select value={t.payProfileId ?? ""} onChange={(e) => onPick(e.target.value || undefined)}>
+          <option value="">없음 — 결제 전에 크롬에서 직접 로그인</option>
+          {choices.map((p) => (
+            <option key={p.id} value={p.id}>
+              {`${p.name} (${LOGIN_LABEL[p.loginStatus]})${p.memo ? ` · ${p.memo}` : ""}${p.isActive ? "" : " — 꺼짐"}`}
+            </option>
+          ))}
+        </select>
+      </label>
+      {picked && picked.loginStatus !== "logged_in" && (
+        <div className="account-row">
+          <span className={`pill login ${picked.loginStatus}`}>{LOGIN_LABEL[picked.loginStatus]}</span>
+          <span className="grow muted">{picked.statusNote} — 이대로면 결제창에서 사람이 로그인해야 합니다.</span>
+          {picked.loginStatus !== "logging_in" && (
+            <button type="button" className="btn small" onClick={() => onLogin(picked.id)}>로그인</button>
+          )}
+        </div>
+      )}
+      {picked && (
+        <span className={picked.hasPaymentPin ? "muted small" : "warn-text small"}>
+          {picked.hasPaymentPin
+            ? `${SITES[site].name}페이 비밀번호는 이 프로필 것을 씁니다.`
+            : `이 프로필에 결제 비밀번호가 없습니다 — 프로필 카드의 "결제 비밀번호 넣기" 에 ${SITES[site].name}페이 비밀번호를 넣으면 자판까지 눌러 줍니다.`}
+        </span>
+      )}
+      {!mine.length && <span className="muted small">{SITES[site].name} 프로필이 없습니다 — 프로필 화면에서 만들고 로그인하면 여기서 고를 수 있습니다.</span>}
+      {gone && <span className="err small">고른 {SITES[site].name} 프로필이 지워졌습니다 — 다시 고르세요.</span>}
+    </div>
+  );
+}
 
 /**
  * 태스크 폼의 "로그인 프로필". 그 사이트의 프로필 중에서 고르고, 여기서 바로 새로 만들거나 로그인할 수 있다.
@@ -1353,6 +1487,7 @@ function ProfileModal({ edit, site: first, profiles, onSaved, onLogin, onClose }
 const LOGIN_HOW: Record<SiteId, string> = {
   lotte: "로그인 창이 뜨면 창 안에서 직접 로그인하세요 (캡차·2단계 인증 포함).",
   naver: "원본의 로그인 창(--login)이 뜨면 창 안에서 직접 로그인하세요.",
+  bnkr: "로그인 창이 뜨면 창 안에서 직접 로그인하세요 (reCAPTCHA 포함). 토큰이 한 시간짜리라 오래 두었으면 다시 로그인하세요.",
 };
 
 function ProfileCard({ p, assigned, users, logOpen, onLogin, onShowLog, onEdit, onPin, onUpsert, onDeleted }: {
@@ -1383,13 +1518,13 @@ function ProfileCard({ p, assigned, users, logOpen, onLogin, onShowLog, onEdit, 
       setBusy(false);
     }
   };
-  const remove = () => {
+  const remove = async () => {
     const note = assigned ? `\n이 프로필을 고른 태스크 ${assigned}개는 프로필 없음으로 돌아갑니다.` : "";
-    if (!confirm(`'${p.name}' 프로필을 지울까요? 로그인 정보와 프로필 폴더가 지워집니다.${note}`)) return;
+    if (!(await aio.ask(`'${p.name}' 프로필을 지울까요? 로그인 정보와 프로필 폴더가 지워집니다.${note}`))) return;
     void act(async () => onDeleted(await aio.deleteProfile(p.id)));
   };
-  const logout = () => {
-    if (!confirm(`'${p.name}' 에서 로그아웃할까요? 프로필 폴더의 로그인 정보를 지웁니다.`)) return;
+  const logout = async () => {
+    if (!(await aio.ask(`'${p.name}' 에서 로그아웃할까요? 프로필 폴더의 로그인 정보를 지웁니다.`))) return;
     void act(async () => onUpsert(await aio.logoutProfile(p.id)));
   };
   const toggle = () => {
@@ -1534,8 +1669,8 @@ function PinModal({ profile, info, onSaved, onClose }: {
           {profile.hasPaymentPin && (
             <button
               type="button" className="btn ghost" disabled={busy}
-              onClick={() => confirm(`'${profile.name}' 의 결제 비밀번호를 지울까요? 결제 단계에서 사람이 넣어야 합니다.`)
-                && void act(() => aio.clearProfilePin(profile.id))}
+              onClick={() => void aio.ask(`'${profile.name}' 의 결제 비밀번호를 지울까요? 결제 단계에서 사람이 넣어야 합니다.`)
+                .then((ok) => { if (ok) void act(() => aio.clearProfilePin(profile.id)); })}
             >지우기</button>
           )}
           <span className="grow" />
@@ -1571,6 +1706,7 @@ function PinAskModal({ profile, onSetPin, onStart, onClose }: {
 const ROOT_HINT: Record<SiteId, string> = {
   lotte: "원본 프로젝트 (aio/node) — dist/lotte-test/index.js 를 들인다",
   naver: "원본 프로젝트 (naver/ts) — src/cli.ts 를 tsx 로 들인다",
+  bnkr: "원본 프로젝트 (aio/node) — dist/bnkr-test/index.js 를 들인다",
 };
 
 function SettingsForm({ infos, profiles, preparing, onPrepare, onSaved, onClose }: {
@@ -1702,7 +1838,7 @@ function PinRow({ site, info, onSetPin, onShowLog }: {
         </button>
         <button
           type="button" className="btn small ghost" disabled={busy || !pin.digits}
-          onClick={() => confirm(`${SITES[site].name} 간편결제 비밀번호를 원본 설정에서 지울까요?`) && void run(null)}
+          onClick={() => void aio.ask(`${SITES[site].name} 간편결제 비밀번호를 원본 설정에서 지울까요?`).then((ok) => { if (ok) void run(null); })}
         >
           지우기
         </button>

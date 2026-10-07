@@ -459,6 +459,20 @@ function registerIpc(): void {
   ipcMain.handle("aio:startAll", () => m().startAll());
   ipcMain.handle("aio:stopAll", () => m().stopAll());
   ipcMain.handle("aio:resetState", (_e, id: string) => m().resetState(id));
+  // 렌더러의 confirm()·alert() 대신 (AioApi.ask 주석). 물은 창(메인·태스크 창·모니터 창)에 붙여 띄운다.
+  ipcMain.handle("aio:ask", async (e, message: string) => {
+    const opts: Electron.MessageBoxOptions = {
+      type: "question", title: "AIO Task Manager", message: String(message), buttons: ["확인", "취소"], defaultId: 0, cancelId: 1,
+    };
+    const win = BrowserWindow.fromWebContents(e.sender);
+    const { response } = await (win ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts));
+    return response === 0;
+  });
+  ipcMain.handle("aio:tell", async (e, message: string) => {
+    const opts: Electron.MessageBoxOptions = { type: "warning", title: "AIO Task Manager", message: String(message), buttons: ["확인"] };
+    const win = BrowserWindow.fromWebContents(e.sender);
+    await (win ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts));
+  });
   ipcMain.handle("aio:openHome", async (_e, id: string) => {
     const home = m().homeOf(id);
     mkdirSync(home, { recursive: true });

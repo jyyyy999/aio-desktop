@@ -38,7 +38,7 @@ export function monitorIntervalWarning(site: SiteId, ms: number, timing: TimingD
  *          아래는 드랍 걸음(--drop)으로 돈다
  *   네이버 2초 — 상품 하나를 이보다 자주 보면 원본이 요청률 거부선(분당 30회)에 걸려 시작하지 않는다
  */
-export const MONITOR_MIN_INTERVAL_MS: Record<SiteId, number> = { lotte: 500, naver: 2000 };
+export const MONITOR_MIN_INTERVAL_MS: Record<SiteId, number> = { lotte: 500, naver: 2000, bnkr: 3000 };
 
 export const ON_FOUND_LABEL: Record<MonitorOnFound, string> = {
   notify: "알림만",
@@ -54,6 +54,7 @@ export function monitorName(input: Pick<MonitorInput, "name" | "site" | "product
 export function monitorProblem(m: MonitorInput): string | null {
   const spec = SITES[m.site];
   if (!spec) return `모르는 사이트입니다: ${String(m.site)}`;
+  if (!spec.monitors) return `${spec.name}는 모니터를 지원하지 않습니다 — 원본의 드라이런이 한 번만 보고 끝납니다. 태스크로 돌리세요.`;
   if (!spec.isProductUrl(m.productUrl)) return spec.urlError;
   if (!Number.isFinite(m.checkIntervalMs) || m.checkIntervalMs < MONITOR_MIN_INTERVAL_MS[m.site]) {
     return `${spec.name} 모니터는 ${MONITOR_MIN_INTERVAL_MS[m.site] / 1000}초보다 촘촘히 볼 수 없습니다.`;

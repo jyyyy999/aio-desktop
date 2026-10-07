@@ -54,6 +54,7 @@ export function planDrop(d: DropSettings, now: number): { dropAt: number; startA
  */
 export const LOTTE_ACTIONS = ["open", "agree", "submit"] as const;
 export const NAVER_ACTIONS = ["open", "submit"] as const;
+export const BNKR_ACTIONS = ["open", "agree", "submit"] as const;
 
 export interface SiteSpec {
   id: SiteId;
@@ -89,6 +90,16 @@ export interface SiteSpec {
    * 같은 프로필로 같은 상품을 둘 돌리면 같은 계정으로 주문서가 두 번 열린다.
    */
   oneTaskPerProfile: boolean;
+  /**
+   * 모니터(사지 않고 재고만 계속 보기)를 만들 수 있나. 모니터는 원본의 감시 루프를 dry-run 으로 돌리는데,
+   * 반다이남코 원본의 --dry-run 은 한 번 보고 끝나서 계속 볼 수 없다.
+   */
+  monitors: boolean;
+  /**
+   * 결제창에서 따로 로그인해야 하는 사이트. 태스크가 그 사이트 프로필을 하나 더 고르면 (TaskDef.payProfileId) 그
+   * 로그인을 원본에 넘긴다. 반다이남코 테스트 판은 네이버페이로 결제해서 네이버에 로그인해야 한다.
+   */
+  payProfileSite: SiteId | null;
 }
 
 export const SITES: Record<SiteId, SiteSpec> = {
@@ -106,6 +117,8 @@ export const SITES: Record<SiteId, SiteSpec> = {
     modes: ["watch", "drop", "once", "buy", "dry-run", "status"],
     loginOptional: ["status", "dry-run"],
     oneTaskPerProfile: false,
+    monitors: true,
+    payProfileSite: null,
   },
   naver: {
     id: "naver",
@@ -125,6 +138,28 @@ export const SITES: Record<SiteId, SiteSpec> = {
     modes: ["watch", "once", "buy", "dry-run", "status"],
     loginOptional: [],
     oneTaskPerProfile: false,
+    monitors: true,
+    payProfileSite: null,
+  },
+  bnkr: {
+    id: "bnkr",
+    name: "반다이남코",
+    tag: "BNKR",
+    actions: BNKR_ACTIONS,
+    // 네이버페이 테스트 판이다 — submit 은 결제창에서 네이버페이를 고르고, 비밀번호가 있으면 마지막 확인까지 간다.
+    actionLabel: { open: "주문서까지", agree: "필수 동의까지", submit: "결제 단계까지" },
+    placeholder: "https://www.bnkrmall.co.kr/goods/detail.do?gno=… 또는 상품번호(gno)",
+    urlError: "반다이남코코리아몰 상품 주소나 상품번호(gno)가 아닙니다.",
+    // 원본 site.ts 의 parseGno 는 숫자 네 자리 이상이면 받는다. 주소는 bnkrmall 것만.
+    isProductUrl: (url) => /bnkrmall\.co\.kr\/.*[?&]gno=\d{4,}|^\d{4,}$/.test(url.trim()),
+    productCode: (url) => /gno=(\d+)/.exec(url)?.[1] ?? url.trim(),
+    // 원본은 설정 파일이 바뀌면 바로 다시 읽는다 (watch.ts 의 reloadConfig). 옵션 상품은 원본이 담지 않는다.
+    liveFields: ["url", "ea", "max_price", "label"],
+    modes: ["watch", "once", "buy", "dry-run", "status"],
+    loginOptional: ["status", "dry-run"],
+    oneTaskPerProfile: false,
+    monitors: false,
+    payProfileSite: "naver",
   },
 };
 
@@ -147,7 +182,7 @@ export const PREPARE_LOG = "__prepare__";
 
 /** 태스크 칸의 이름. 돌던 중에 무엇이 바뀌었는지 로그에 적을 때 쓴다. */
 export const FIELD_LABEL: Record<keyof TaskDef, string> = {
-  id: "id", site: "사이트", profileId: "로그인 프로필", label: "이름", url: "상품 주소", option: "옵션", ea: "수량", max_price: "상한가",
+  id: "id", site: "사이트", profileId: "로그인 프로필", payProfileId: "결제 로그인 프로필", label: "이름", url: "상품 주소", option: "옵션", ea: "수량", max_price: "상한가",
   mode: "모드", action: "어디까지", checkIntervalMs: "확인 간격", maxRetries: "재시도", retryDelayMs: "재시도 간격",
   monitorDurationMs: "감시 시간", stopOnSuccess: "사고 나면", maxBuys: "최대 몇 번", dropSettings: "드랍 설정",
 };

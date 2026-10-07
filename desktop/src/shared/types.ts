@@ -7,7 +7,7 @@
  * 어느 원본으로 돌리나. main 과 화면이 사이트 사이의 차이에 대해 아는 것은 이것뿐이다 —
  * 원본을 어떻게 띄우는지는 main/sites/ 의 어댑터가 안다.
  */
-export type SiteId = "lotte" | "naver";
+export type SiteId = "lotte" | "naver" | "bnkr";
 
 /**
  * 태스크를 무엇으로 돌릴지. 원본의 명령줄 옵션에 하나씩 대응한다 (어댑터가 옮긴다).
@@ -42,6 +42,11 @@ export interface TaskDef {
    * 모드(sites.ts 의 loginOptional)만 된다.
    */
   profileId?: string;
+  /**
+   * 결제창 로그인에 쓸 다른 사이트의 프로필 (sites.ts 의 payProfileSite — 반다이남코 네이버페이 → 네이버 프로필).
+   * 그 프로필의 네이버 세션을 원본 크롬에 같이 심어 네이버페이 창이 로그인된 채로 열린다. 없으면 사람이 로그인한다.
+   */
+  payProfileId?: string;
   label: string;
   /** 상품 주소 (롯데온은 상품번호도 된다). */
   url: string;
@@ -229,7 +234,7 @@ export interface WebhookInfo {
   from: string;
 }
 
-/** 원본이 돌 준비가 됐나. 설정 창과 상단 배너에 보인다. */
+/** 원본이 돌 준비가 됐나. 설정 창과 상단 오른쪽 알림(🔔)에 보인다. */
 export interface SiteInfo {
   site: SiteId;
   entry: string;
@@ -245,7 +250,7 @@ export interface SiteInfo {
   pin: { digits: number; fromEnv: string | null; effect: string };
   /** 이게 남아 있으면 태스크를 띄우지 않는다. */
   problems: string[];
-  /** 띄우기는 하지만 모드에 따라 원본이 거절할 것 (쿠키·웹훅). 상단 배너에도 보인다. */
+  /** 띄우기는 하지만 모드에 따라 원본이 거절할 것 (쿠키·웹훅). 상단 오른쪽 알림(🔔)에도 보인다. */
   warnings: string[];
   /** 알아 둘 것. 설정 창에만 보인다. */
   notes: string[];
@@ -416,6 +421,13 @@ export interface AioApi {
   stopAll(): Promise<void>;
   resetState(id: string): Promise<void>;
   openHome(id: string): Promise<void>;
+  /**
+   * 예/아니오 물음 · 알림. 렌더러의 confirm()·alert() 대신 쓴다 — 윈도의 Electron 에서 그 둘을 한 번 띄우고 나면
+   * 창의 입력칸에 포커스가 안 들어가 클릭도 입력도 안 된다 (2026-10-07, 산 기록 지우기 뒤 결제 비밀번호 창).
+   * main 의 dialog.showMessageBox 로 띄운다.
+   */
+  ask(message: string): Promise<boolean>;
+  tell(message: string): Promise<void>;
   getSettings(): Promise<Settings>;
   saveSettings(s: Settings): Promise<Settings>;
   sitesInfo(): Promise<SiteInfo[]>;

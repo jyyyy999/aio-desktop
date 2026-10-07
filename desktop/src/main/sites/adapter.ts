@@ -174,8 +174,12 @@ export interface SiteAdapter {
    * @param profileDir 태스크가 고른 로그인 프로필의 폴더. 없으면 로그인 없이 (TaskManager 가 그래도 되는 모드인지 먼저 본다).
    * @param pin 그 프로필의 결제 비밀번호. 없으면 "". **원본의 비밀번호 환경변수에 언제나 적는다** (빈 값도) — 사용자
    *            환경변수나 원본 설정 파일의 콘솔용 비밀번호가 태스크로 새어 들지 않게. 태스크 홈 설정에는 적지 않는다.
+   * @param payProfileDir 결제창 로그인에 쓸 프로필(TaskDef.payProfileId)의 폴더. 없으면 null — 사람이 로그인한다.
    */
-  launch(task: TaskDef, home: string, s: SiteSettings, common: CommonSettings, profileDir: string | null, pin: string): Launch;
+  launch(
+    task: TaskDef, home: string, s: SiteSettings, common: CommonSettings, profileDir: string | null, pin: string,
+    payProfileDir: string | null,
+  ): Launch;
   /** 산 기록을 지운다 (원본의 --reset 과 같은 일). */
   resetState(home: string): void;
   /**

@@ -1,6 +1,6 @@
 {
   // 원본과 맞대 보기만 한다 (src/legacy/contract.ts). 아무것도 굽지 않는다.
-  // 경로 별칭은 기본 배치(aio/desktop 옆의 aio/node, ../naver/ts)를 가리킨다.
+  // 경로 별칭은 기본 배치(aio/desktop 옆의 aio/node — 롯데·반다이남코, ../naver/ts)를 가리킨다.
   "compilerOptions": {
     "target": "ES2022",
     "module": "ESNext",
@@ -12,6 +12,7 @@
     "types": ["node"],
     "paths": {
       "@lotte/*": ["../node/src/lotte-test/*"],
+      "@bnkr/*": ["../node/src/bnkr-test/*"],
       "@naver/*": ["../../naver/ts/src/*"]
     }
   },

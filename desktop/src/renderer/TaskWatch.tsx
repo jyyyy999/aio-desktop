@@ -226,7 +226,7 @@ export function TaskWatch({ taskId }: { taskId: string }) {
   };
 
   const reset = async () => {
-    if (!confirm("이 태스크의 산 기록·쉬는 기록을 지울까요? (원본의 --reset)\n다음 실행에서 쉬지 않고 바로 다시 보고, 산 것도 다시 삽니다.")) return;
+    if (!(await aio.ask("이 태스크의 산 기록·쉬는 기록을 지울까요? (원본의 --reset)\n다음 실행에서 쉬지 않고 바로 다시 보고, 산 것도 다시 삽니다."))) return;
     setSaved(null);
     try {
       await aio.resetState(taskId);
@@ -292,7 +292,7 @@ export function TaskWatch({ taskId }: { taskId: string }) {
         {rt.note && <div className="tw-note" title="원본이 기다리는 동안 제자리에서 고쳐 쓰는 줄">{rt.note}</div>}
         {phase === "checkout" && (
           <p className="tw-hint">
-            주문서·결제창이 열렸습니다 — 원본이 띄운 {task.site === "lotte" ? "크롬" : "브라우저"} 창에서 이어 가세요.
+            주문서·결제창이 열렸습니다 — 원본이 띄운 {task.site === "naver" ? "브라우저" : "크롬"} 창에서 이어 가세요.
             이 창에는 브라우저 화면이 없습니다.
           </p>
         )}
@@ -304,8 +304,8 @@ export function TaskWatch({ taskId }: { taskId: string }) {
           <span>
             최근 로그 <span className="muted">· {shown.length}줄{frozen ? ` · 멈춘 뒤 ${logs.filter((l) => l.seq > (frozen.at(-1)?.seq ?? 0)).length}줄 더 옴` : ""}</span>
           </span>
-          {task.site === "lotte" && REPEATING_MODES.includes(task.mode) && (
-            <span className="muted small">롯데 원본은 바뀐 것이 있을 때만 줄을 찍습니다 — 그 사이는 위의 상태 줄이 보여 줍니다</span>
+          {task.site !== "naver" && REPEATING_MODES.includes(task.mode) && (
+            <span className="muted small">{SITES[task.site].name} 원본은 바뀐 것이 있을 때만 줄을 찍습니다 — 그 사이는 위의 상태 줄이 보여 줍니다</span>
           )}
         </div>
         <LogView lines={shown} />

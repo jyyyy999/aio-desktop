@@ -56,10 +56,28 @@ code, .mono { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px
 .btn.ghost { background: transparent; }
 .btn.small { padding: 3px 8px; font-size: 12px; }
 
-.banner {
-  display: flex; flex-wrap: wrap; gap: 16px; align-items: center;
-  padding: 8px 18px; background: #2a1f0b; border-bottom: 1px solid #4a3510; color: #f5d08a;
+/* ── 알림 (🔔) — 상단 바 오른쪽. 예전 상단 배너 자리 ───────────────────────── */
+.notice { position: relative; }
+.notice-btn { position: relative; padding: 7px 10px; }
+.notice-btn.on { border-color: var(--accent); }
+.notice-count {
+  position: absolute; top: -6px; right: -6px; min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: 999px; background: var(--warn); color: #1a1205; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;
 }
+.notice-count.bad { background: var(--stop); color: white; }
+.notice-pop {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 9; width: min(440px, 90vw); max-height: 70vh; overflow: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,.5);
+  padding: 10px 12px; display: flex; flex-direction: column; gap: 10px;
+}
+.notice-head { display: flex; align-items: center; gap: 8px; }
+.notice-empty { padding: 12px 0; text-align: center; }
+.notice-site { border: 1px solid #4a3510; background: #2a1f0b; border-radius: 8px; padding: 8px 10px; color: #f5d08a; }
+.notice-site-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.notice-lines { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 3px; font-size: 12px; line-height: 1.45; }
+.notice-lines li.bad { color: #fca5a5; }
+.notice-actions { display: flex; gap: 6px; margin-top: 6px; }
+.notice-actions:empty { display: none; }
 
 .grid { flex: 1; display: grid; grid-template-rows: minmax(160px, 1fr) minmax(180px, 38%); min-height: 0; }
 
@@ -121,7 +139,7 @@ td.last { overflow: hidden; text-overflow: ellipsis; color: #c3c9d6; font-family
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; margin-top: 6px; }
 
 /* ── 사이트 ─────────────────────────────────────────────────────────── */
-:root { --lotte: #ff5a5f; --naver: #03c75a; }
+:root { --lotte: #ff5a5f; --naver: #03c75a; --bnkr: #4a8cff; }
 
 .site {
   display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .6px;
@@ -129,6 +147,7 @@ td.last { overflow: hidden; text-overflow: ellipsis; color: #c3c9d6; font-family
 }
 .site.lotte { color: var(--lotte); background: #2a1113; }
 .site.naver { color: var(--naver); background: #0b2417; }
+.site.bnkr { color: var(--bnkr); background: #0f1a2e; }
 
 .filters { display: flex; gap: 6px; padding: 8px 18px; border-bottom: 1px solid var(--line); background: var(--bg); }
 .chip {
@@ -139,10 +158,8 @@ td.last { overflow: hidden; text-overflow: ellipsis; color: #c3c9d6; font-family
 .chip.on { color: var(--text); border-color: var(--accent); background: #1b1733; }
 .chip.on.lotte { border-color: var(--lotte); background: #2a1113; }
 .chip.on.naver { border-color: var(--naver); background: #0b2417; }
+.chip.on.bnkr { border-color: var(--bnkr); background: #0f1a2e; }
 
-.banner { flex-direction: column; align-items: stretch; gap: 6px; }
-.banner-site { display: flex; align-items: center; gap: 12px; }
-.banner-lines { display: flex; flex-direction: column; gap: 2px; flex: 1; }
 
 .icon.force { width: auto; padding: 0 8px; color: var(--warn); border-color: #5a3f0c; }
 
@@ -153,6 +170,7 @@ td.last { overflow: hidden; text-overflow: ellipsis; color: #c3c9d6; font-family
 .segmented button + button { border-left: 1px solid var(--line); }
 .segmented button.on.lotte { color: var(--lotte); background: #2a1113; font-weight: 600; }
 .segmented button.on.naver { color: var(--naver); background: #0b2417; font-weight: 600; }
+.segmented button.on.bnkr { color: var(--bnkr); background: #0f1a2e; font-weight: 600; }
 
 .modal.wide { width: min(760px, 94vw); max-height: 92vh; overflow: auto; }
 .site-box { border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px 14px; margin: 0; display: flex; flex-direction: column; gap: 10px; }

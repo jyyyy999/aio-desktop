@@ -7,14 +7,15 @@
  * pg_password 를 적어 뒀을 때만 자동으로 넣는다 (browser.ts 의 enterPin).
  */
 import { exec } from "node:child_process";
+import { readFileSync } from "node:fs";
 import {
-  cookieOf, passwordOf, PG_DUMP_PATH, profileDir, run, wants, type Config, type Mode,
+  cookieOf, naverSessionOf, passwordOf, PG_DUMP_PATH, profileDir, run, wants, type Config, type Mode,
 } from "./config.js";
 import { log, sayOk, sayStar, sayStep } from "./log.js";
 import { notifyPaid, notifyPayment } from "./notify.js";
 import {
-  alive, BrowserError, capturePayment, isQueue, openOrder, paidDetails, preheat, stepLabels,
-  waitLogin, waitPaid, type Action, type Chrome,
+  alive, BrowserError, capturePayment, isQueue, naverLoggedIn, openOrder, paidDetails, plantCookies, preheat,
+  stepLabels, waitLogin, waitPaid, type Action, type CdpCookie, type Chrome,
 } from "./browser.js";
 import { LANDING, LANDING_LABEL, STAGE_LABEL } from "./site.js";
 import { Session } from "./http.js";
@@ -49,6 +50,32 @@ export async function preheatBrowser(cfg: Config): Promise<void> {
 }
 
 /**
+ * 네이버 로그인 세션 파일(naver_session)의 네이버 쿠키. 안 쓰거나 못 읽으면 빈 목록.
+ *
+ * 파일은 쓸 때마다 다시 읽는다 — 네이버 판(또는 데스크톱 앱의 네이버 프로필)에서 다시 로그인하면 이 파일이
+ * 새로 쓰이는데, 도는 동안에도 그걸 따라가야 한다. 값은 로그에 남기지 않는다.
+ */
+function naverCookies(cfg: Config): CdpCookie[] {
+  const path = naverSessionOf(cfg);
+  if (!path) return [];
+  try {
+    const data = JSON.parse(readFileSync(path, "utf-8").replace(/^﻿/, "")) as { cookies?: CdpCookie[] };
+    return (data.cookies ?? [])
+      .filter((c) => c && c.name && typeof c.value === "string" && String(c.domain).endsWith("naver.com"))
+      .map((c) => ({
+        name: c.name, value: c.value, domain: c.domain, path: c.path || "/",
+        secure: !!c.secure, httpOnly: !!c.httpOnly,
+        ...(c.sameSite ? { sameSite: c.sameSite } : {}),
+        // Playwright 는 세션 쿠키를 -1 로 적는다. CDP 에는 칸을 빼야 세션 쿠키다.
+        ...(typeof c.expires === "number" && c.expires > 0 ? { expires: c.expires } : {}),
+      }));
+  } catch (e) {
+    log.warn(`네이버 세션 파일을 읽지 못했습니다 (${(e as Error).message}) — 네이버페이 로그인은 사람이 합니다`);
+    return [];
+  }
+}
+
+/**
  * 감시를 시작하기 전에 로그인 페이지를 띄워 두고 사람을 기다린다.
  *
  * 네이버페이처럼 결제창에서 다른 사이트에 로그인해야 하는 수단을 쓸 때 필요하다. 재고가
@@ -56,8 +83,21 @@ export async function preheatBrowser(cfg: Config): Promise<void> {
  * 동안은 어차피 노는 시간이니 그때 해 둔다.
  *
  * **로그인은 사람이 한다.** 안 되면 그냥 넘어간다 — 담기까지는 이 로그인 없이도 된다.
+ *
+ * 네이버 세션 파일(naver_session)이 있으면 먼저 그 쿠키를 심어 본다. 그것으로 로그인돼 있으면 사람을
+ * 기다리지 않는다. 아이디·비밀번호는 여기서도 다루지 않는다 — 사람이 네이버 판에서 로그인해 둔 세션을 옮길 뿐이다.
  */
 async function prelogin(cfg: Config, box: Chrome): Promise<void> {
+  const naver = naverCookies(cfg);
+  if (naver.length) {
+    const planted = await plantCookies(box, naver);
+    if (planted && (await naverLoggedIn(box))) {
+      sayOk(`네이버 세션을 심었습니다 (쿠키 ${planted}개) — 네이버페이 창이 로그인된 채로 열립니다`);
+      return;
+    }
+    log.warn("네이버 세션을 심었지만 로그인이 안 됩니다 (만료됐을 수 있습니다) — 네이버에 다시 로그인해 세션을 새로 받아 주세요 (데스크톱 앱 네이버 프로필 · 네이버 판 --login)");
+  }
+
   const url = (cfg.prelogin_url || "").trim();
   if (!url) return;
 
@@ -125,6 +165,8 @@ async function openWithSelenium(
       chrome: await takeIdleBrowser(),
       profile: profileDir(cfg),
       offscreen: cfg.browser_offscreen,
+      // 결제창(네이버페이)이 로그인된 채로 열리게. 미리 띄운 창에 이미 심었어도 다시 심는다 — 파일이 새로 쓰였을 수 있다.
+      extraCookies: naverCookies(cfg),
     });
   } catch (e) {
     if (!(e instanceof BrowserError)) throw e;
