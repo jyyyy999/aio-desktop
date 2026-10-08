@@ -875,17 +875,19 @@ async function main(): Promise<void> {
       const inStock = product.variants.filter((v) => v.available);
       if (!inStock.length) throw new Error(`[${handle}] 전 사이즈 품절입니다`);
       // 사이즈는 **별칭까지 맞춰** 고른다 (L = Large). 못 찾으면 다른 사이즈로 가지 않는다.
-      const wanted = target.option
-        ? inStock.find((v) => sizeEquals(v.size, target.option) || sizeEquals(v.title, target.option))
+      // 옵션 칸은 "색 / 사이즈" 일 수 있다 — 사이즈만 견준다 (색은 상품 주소가 이미 정했다).
+      const wantSize = parseOptionSpec(target.option).size;
+      const wanted = wantSize
+        ? inStock.find((v) => sizeEquals(v.size, wantSize) || sizeEquals(v.title, wantSize))
         : undefined;
-      if (target.option && !wanted && !cfg.buy.size_fallback) {
+      if (wantSize && !wanted && !cfg.buy.size_fallback) {
         throw new Error(
-          `[${handle}] 원하는 사이즈(${target.option})가 없습니다 — 재고: ${inStock.map((v) => v.size || v.title).join(", ")}\n` +
+          `[${handle}] 원하는 사이즈(${wantSize})가 없습니다 — 재고: ${inStock.map((v) => v.size || v.title).join(", ")}\n` +
             "   엉뚱한 사이즈를 담지 않았습니다. 다른 사이즈도 괜찮으면 설정의 buy.size_fallback 을 true 로 두세요.",
         );
       }
       const variant = wanted ?? inStock[0]!;
-      if (target.option && !wanted) log.warn(`대체 허용(buy.size_fallback) — ${variant.size || variant.title} 로 담습니다`);
+      if (wantSize && !wanted) log.warn(`대체 허용(buy.size_fallback) — ${variant.size || variant.title} 로 담습니다`);
       await buyProduct(browser, shop, cfg, state, product, variant, target, target.ea);
       saveState(state);
     } finally {

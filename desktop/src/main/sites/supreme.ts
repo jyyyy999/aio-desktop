@@ -357,7 +357,9 @@ export const supreme: SiteAdapter = {
       // **링크 없이 키워드로 사기** — 감시하다 걸리면 담아서 결제까지.
       // 설정에는 포함/제외 키워드만 넣고(대상 목록은 비운다), 인자로도 같은 사양을 넘긴다.
       const spec = parseKeywordSpec(task.url);
+      // 옵션 칸은 "색 / 사이즈" 다 — 원본은 --size 로 통째 받아 가르지만, 설정의 size_priority 에는 사이즈만 넣는다.
       const size = String(task.option || "").trim();
+      const sizeOnly = size.slice(size.lastIndexOf("/") + 1).trim();
       const keywordCfg = {
         ...cfg,
         include_keywords: spec.include,
@@ -365,11 +367,11 @@ export const supreme: SiteAdapter = {
         // `#jackets` 로 좁혔으면 그 컬렉션만 훑는다 (전체 209개를 도는 것보다 훨씬 빠르다).
         ...(spec.collections.length ? { collections: spec.collections } : {}),
         targets: [],
-        ...(size
+        ...(sizeOnly
           ? {
               buy: {
                 ...(cfg.buy as Record<string, unknown>),
-                size_priority: [size, ...(((seed["buy"] as { size_priority?: string[] } | undefined)?.size_priority) ?? [])],
+                size_priority: [sizeOnly, ...(((seed["buy"] as { size_priority?: string[] } | undefined)?.size_priority) ?? [])],
               },
             }
           : {}),

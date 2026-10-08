@@ -172,10 +172,17 @@ export const sizeEquals = (a: string, b: string): boolean => {
   return !!x && !!y && x === y;
 };
 
+/**
+ * 색 조건에 맞는 variant 인가. **variant 에 색이 없으면 통과** — 슈프림은 색마다 상품이 따로라 variant 옵션이
+ * 사이즈뿐이고, 색은 상품 이름(포함 키워드)에서 이미 걸렀다. 막으면 색을 적은 태스크가 아무것도 못 산다.
+ */
+const colorOk = (v: Variant, rule: MonitorRule): boolean =>
+  !rule.colors.length || !v.color.trim() || rule.colors.some((c) => lower(v.color).includes(lower(c)));
+
 /** variant 단위 필터 (색상·사이즈) */
 export function matchVariant(variant: Variant | null, rule: MonitorRule): { ok: boolean; reason: string } {
   if (!variant) return { ok: true, reason: "variant 없음" };
-  if (rule.colors.length && !rule.colors.some((c) => lower(variant.color).includes(lower(c)))) {
+  if (!colorOk(variant, rule)) {
     return { ok: false, reason: `색상 불일치(${variant.color || "?"})` };
   }
   if (rule.sizes.length && !rule.sizes.some((s) => sizeEquals(variant.size, s))) {
@@ -191,8 +198,7 @@ export function pickVariant(product: Product, buy: BuyRule, rule: MonitorRule): 
   const inStock = all.filter((v) => v.available);
   if (!inStock.length) return { variant: null, reason: "전 사이즈 품절" };
 
-  const colorOk = (v: Variant): boolean => !rule.colors.length || rule.colors.some((c) => lower(v.color).includes(lower(c)));
-  const pool = inStock.filter(colorOk);
+  const pool = inStock.filter((v) => colorOk(v, rule));
   if (!pool.length) return { variant: null, reason: "색상 조건에 맞는 재고 없음" };
   if (all.length === 1) return { variant: pool[0] ?? null, reason: "단일 variant" };
 

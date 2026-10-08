@@ -399,6 +399,15 @@ async function colorFillTests(): Promise<void> {
   ok("색이 빠진 카드도 +camo 로 걸린다", found.length === 1 && found[0]!.includes("/products/n2b-camo"), found.join(" / ") || lines.join(" / "));
   ok("다른 색(Black)은 보완해도 안 걸린다", !found.some((line) => line.includes("n2b-black")));
   ok("요청은 후보 수만큼만", resolvedHandles.sort().join(",") === "n2b-black,n2b-camo", resolvedHandles.join(","));
+
+  // 색을 적으면(--size "Predator Camo / Large") 원본이 colors 에도 넣는다. 슈프림 variant 는 사이즈뿐이라
+  // 색이 비어 있다 — 그걸 "색상 불일치" 로 막으면 색을 적은 태스크는 영영 못 산다.
+  const sizeOnly = normalizeProduct(pages["n2b-camo"]!);
+  const withColor = rule({ include: ["gore", "camo"], colors: ["Predator Camo"] });
+  const pickedCamo = pickVariant(sizeOnly, buyRule({ sizePriority: ["Large"] }), withColor);
+  ok("사이즈뿐인 variant 는 색 조건으로 막지 않는다", pickedCamo.variant?.size === "Large", pickedCamo.reason);
+  const colored = normalizeProduct(RAW);
+  ok("색 옵션이 있으면 여전히 색으로 고른다", pickVariant(colored, buyRule(), rule({ colors: ["White"] })).variant?.color === "White");
 }
 
 /**
