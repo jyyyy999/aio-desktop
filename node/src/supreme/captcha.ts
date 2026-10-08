@@ -141,7 +141,11 @@ const HIDDEN_ATTR = "data-aio-hidden";
  *
  * @param mode hide = 나머지를 아예 치운다(캡차 전용 창) · dim = 흐리게만 (페이지 모양 유지)
  */
-export function focusScript(mode: "hide" | "dim" = "hide", bannerText = "hCaptcha를 직접 풀어 주세요. 다 풀면 자동으로 이어서 진행합니다."): string {
+export function focusScript(
+  mode: "hide" | "dim" = "hide",
+  bannerText = "hCaptcha를 직접 풀어 주세요. 다 풀면 자동으로 이어서 진행합니다.",
+  firstTime = true,
+): string {
   return `(() => {
   const hints = ${HINTS};
   const mode = ${JSON.stringify(mode)};
@@ -185,7 +189,11 @@ export function focusScript(mode: "hide" | "dim" = "hide", bannerText = "hCaptch
 
   const target = frames[0];
   const rect = target.getBoundingClientRect();
-  const wantsScroll = rect.top < 0 || rect.bottom > window.innerHeight || rect.left < 0 || rect.right > window.innerWidth;
+  // 처음에는 조금만 잘려도 맞춘다. 다시 걸 때(1초마다)는 **아예 안 보일 때만** — 사람이 문제 그림을 보려고
+  // 스크롤한 것을 매초 되돌리지 않게.
+  const wantsScroll = ${JSON.stringify(firstTime)}
+    ? rect.top < 0 || rect.bottom > window.innerHeight || rect.left < 0 || rect.right > window.innerWidth
+    : rect.bottom < 0 || rect.top > window.innerHeight || rect.right < 0 || rect.left > window.innerWidth;
   if (wantsScroll) target.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
 
   // 사람에게 보이는 안내 띠. body 형제 숨김에 걸리지 않게 documentElement 에 직접 붙인다.

@@ -116,7 +116,7 @@ export async function solveCaptcha(host: CaptchaWindowHost, options: Partial<Cap
 
     if (!opts.silent && Date.now() - started - refreshes * opts.refreshMs >= opts.refreshMs) {
       // 페이지가 다시 그려지며 숨김이 풀리거나 문제 창이 새로 뜬 경우를 여기서 다시 잡는다.
-      await host.run(focusScript(opts.mode, opts.bannerText));
+      await host.run(focusScript(opts.mode, opts.bannerText, false));
       refreshes++;
     }
 

@@ -240,6 +240,23 @@ export class SupremeBrowser implements CheckoutHost {
     this.activeHandle = handle;
   }
 
+  /**
+   * 조작 대상 창으로 간다. **사람이 캡차 창을 닫아 버렸으면** 원래 창으로 돌아가 그 창을 화면에 띄운다 —
+   * 닫힌 창을 붙잡고 예외로 태스크가 통째로 죽지 않게 (원래 창에도 같은 캡차가 있어 거기서 풀면 된다).
+   */
+  private async useAlive(): Promise<void> {
+    try {
+      await this.use(this.activeHandle);
+      return;
+    } catch (e) {
+      if (!this.captchaHandle || this.activeHandle !== this.captchaHandle) throw e;
+    }
+    log.warn("캡차 창이 닫혔습니다 — 원래 창을 화면에 띄웁니다 (거기서 이어서 풀어 주세요)");
+    this.captchaHandle = null;
+    if (!(await this.fallbackToMain())) throw new BrowserError("캡차 창과 원래 창이 모두 닫혔습니다");
+    await this.showCurrentWindowOnScreen();
+  }
+
   async windowHandles(): Promise<string[]> {
     return this.driver.getAllWindowHandles();
   }
@@ -263,7 +280,7 @@ export class SupremeBrowser implements CheckoutHost {
   /* ── 페이지 ──────────────────────────────────────────── */
 
   async goto(url: string): Promise<void> {
-    await this.use(this.activeHandle);
+    await this.useAlive();
     this.failing = false;
     await this.driver.get(url);
     await this.settle(10_000);
@@ -291,7 +308,7 @@ export class SupremeBrowser implements CheckoutHost {
   }
 
   async run(script: string): Promise<unknown> {
-    await this.use(this.activeHandle);
+    await this.useAlive();
     return this.driver.executeScript(this.bodyOf(script));
   }
 
@@ -311,7 +328,7 @@ export class SupremeBrowser implements CheckoutHost {
 
   /** 지금 문서의 iframe 들 — 카드 입력창은 여기 안에 있다. */
   async frames(): Promise<FrameHandle[]> {
-    await this.use(this.activeHandle);
+    await this.useAlive();
     const out: FrameHandle[] = [];
     let count = 0;
     try {
@@ -339,7 +356,7 @@ export class SupremeBrowser implements CheckoutHost {
   }
 
   private async runInFrame(index: number, script: string): Promise<unknown> {
-    await this.use(this.activeHandle);
+    await this.useAlive();
     try {
       await this.driver.switchTo().frame(index);
       const value = await this.driver.executeScript(this.bodyOf(script));

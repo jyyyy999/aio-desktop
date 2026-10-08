@@ -205,6 +205,7 @@ function pureTests(): void {
   ok("캡차 없으면 안 부른다", needsHuman({ ...probe, present: false }).needed === false);
   ok("probeScript 가 토큰 칸을 본다", probeScript().includes("h-captcha-response"));
   ok("focusScript 가 hcaptcha 를 찾는다", focusScript("hide").includes("hcaptcha.com"));
+  ok("다시 걸 때는 사람의 스크롤을 되돌리지 않는다(첫 번과 다르게 본다)", focusScript("hide", "x", true) !== focusScript("hide", "x", false));
   ok("unfocusScript 가 되돌린다", unfocusScript().includes("data-aio-hidden"));
 
   console.log("\n== 체크아웃 스크립트 ==");
@@ -278,6 +279,18 @@ async function browserTests(): Promise<void> {
     ok("사람이 풀면 토큰이 폼에 들어온다", token.length > 20, `${token.slice(0, 20)}…`);
     const solved = (await browser.run(probeScript())) as CaptchaProbe;
     ok("풀린 것으로 본다", solved.solved === true);
+
+    // 사람이 캡차 창을 닫아 버려도 태스크가 죽지 않는다 — 원래 창으로 돌아가 그 창을 화면에 띄운다.
+    await browser.showCaptchaWindow({ width: 0, height: 0, onTop: false, title: "hCaptcha" });
+    ok("캡차 전용 창이 열린다", await browser.activeIsCaptchaWindow());
+    await (browser as unknown as { driver: { close(): Promise<void> } }).driver.close(); // 사람이 창을 닫은 척
+    let survived = false;
+    try {
+      survived = (await browser.run("(() => 1 + 1)()")) === 2;
+    } catch {
+      survived = false;
+    }
+    ok("캡차 창을 닫아도 원래 창으로 돌아가 이어 간다", survived && !(await browser.activeIsCaptchaWindow()));
 
     // 결제까지. 캡차는 페이지가 다시 실리면서 초기화되므로, **사람이 풀어 주는 척**을 심어 둔다.
     //   새 문서마다 심는다 (Page.addScriptToEvaluateOnNewDocument) — 캡차 전용 창이 새로 열려도 따라간다.
