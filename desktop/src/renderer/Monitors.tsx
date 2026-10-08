@@ -240,7 +240,7 @@ function MonitorCard({ entry, profiles, now, selected, onSelect, onEdit, onChang
 // ── 만들기 · 고치기 폼 ──────────────────────────────────────────────────────
 
 /** 간격을 비워 둘 때 — 롯데는 씨앗 하한(드랍 걸음이 아니게), 네이버는 권장선 안쪽. */
-const DEFAULT_INTERVAL_MS: Record<SiteId, number> = { lotte: 5000, naver: 10000, bnkr: 15000 };
+const DEFAULT_INTERVAL_MS: Record<SiteId, number> = { lotte: 5000, naver: 10000, bnkr: 15000, supreme: 2500 };
 
 function blankInput(site: SiteId, profiles: Profile[]): MonitorInput {
   const mine = profiles.filter((p) => p.site === site && p.isActive);
@@ -352,7 +352,9 @@ function MonitorForm({ initial, profiles, infos, onSaved, onCancel }: {
           <p className="muted small">
             {m.site === "lotte"
               ? "롯데는 주소의 단품(sitmNo)으로 재고를 봅니다 — 옵션 글자는 구매로 전환했을 때 고르는 데 씁니다. 상한가를 넘으면 발견으로 보지 않습니다."
-              : "네이버는 옵션 재고까지 봅니다 — 옵션을 적으면 그 옵션이 풀려야 발견입니다. 상한가를 넘으면 발견으로 보지 않습니다."}
+              : m.site === "supreme"
+                ? "슈프림은 Shopify 목록(막혀 있으면 페이지 HTML)으로 보고, 옵션(사이즈)은 상품 페이지에서 확인합니다. 상한가를 넘으면 발견으로 보지 않습니다."
+                : "네이버는 옵션 재고까지 봅니다 — 옵션을 적으면 그 옵션이 풀려야 발견입니다. 상한가를 넘으면 발견으로 보지 않습니다."}
           </p>
         </fieldset>
 

@@ -9,8 +9,9 @@ import { useEffect, useState } from "react";
 import { MODE_LABEL, REPEATING_MODES, SITES, siteOfUrl } from "../shared/sites";
 import type { LogLine, Profile, SiteInfo, TaskDef, TaskPhase, TaskRuntime, TaskStatus } from "../shared/types";
 import {
-  copyText, countdown, errText, idleRuntime, LIVE, LOGIN_LABEL, LogView, mergeLogs, SiteTag, span, STATUS_LABEL, uptime,
+  copyText, countdown, errText, idleRuntime, LIVE, LOGIN_LABEL, LogView, mergeLogs, SiteTag, span, STATUS_LABEL, targetText, uptime,
 } from "./App";
+import { isSupremeProductUrl } from "../shared/supremeSpec";
 
 const aio = window.aio;
 
@@ -104,7 +105,7 @@ function LinkBox({ task, status }: { task: TaskDef; status: TaskStatus }) {
   return (
     <div className="tw-link">
       <div className="tw-link-row">
-        <span className="muted">상품 주소</span>
+        <span className="muted">{task.site === "supreme" && !isSupremeProductUrl(task.url) ? "키워드" : "상품 주소"}</span>
         {editing === null ? (
           <>
             <span className="tw-link-url mono" title={task.url}>{task.url}</span>
@@ -182,7 +183,7 @@ export function TaskWatch({ taskId }: { taskId: string }) {
   const at = tasks.findIndex((t) => t.id === taskId);
   const task = tasks[at];
   const no = String(at + 1).padStart(2, "0");
-  const name = task ? task.label || SITES[task.site].productCode(task.url) : "";
+  const name = task ? targetText(task).name : "";
 
   useEffect(() => {
     if (task) document.title = `태스크 창 — #${no} ${name} (${MODE_LABEL[task.mode]})`;
@@ -204,9 +205,10 @@ export function TaskWatch({ taskId }: { taskId: string }) {
   // 원본이 몇 초마다 한 번 말해 주니, 그 사이는 받은 시각부터 줄여 보인다. 오래 말이 없으면 숨긴다.
   const queueShown = live && rt.queue !== null && now - rt.queue.at < QUEUE_STALE_MS;
   const queueLeft = queueShown && rt.queue!.eta !== null ? Math.max(0, rt.queue!.eta - Math.floor((now - rt.queue!.at) / 1000)) : null;
+  const what = targetText(task);
   const target = [
     name,
-    task.option && `옵션 ${task.option}`,
+    task.site === "supreme" ? what.sub : task.option && `옵션 ${task.option}`,
     `×${task.ea}`,
     task.max_price ? `상한가 ${task.max_price.toLocaleString()}원` : "상한가 없음",
   ].filter(Boolean).join(" / ");

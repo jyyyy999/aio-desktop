@@ -55,6 +55,11 @@ export function planDrop(d: DropSettings, now: number): { dropAt: number; startA
 export const LOTTE_ACTIONS = ["open", "agree", "submit"] as const;
 export const NAVER_ACTIONS = ["open", "submit"] as const;
 export const BNKR_ACTIONS = ["open", "agree", "submit"] as const;
+/**
+ * 슈프림은 --action 이 없다 — 자동으로 어디까지 갈지는 원본 설정의 buy.click_pay 가 정한다
+ * (기본: 결제 버튼까지). 그래서 고를 것이 없다.
+ */
+export const SUPREME_ACTIONS = [] as const;
 
 export interface SiteSpec {
   id: SiteId;
@@ -160,6 +165,29 @@ export const SITES: Record<SiteId, SiteSpec> = {
     oneTaskPerProfile: false,
     monitors: false,
     payProfileSite: "naver",
+  },
+  supreme: {
+    id: "supreme",
+    name: "슈프림",
+    tag: "SUPREME",
+    // Shopify 체크아웃에는 "--action" 이 없다. 결제 버튼까지 갈지는 원본 설정이 정한다.
+    actions: SUPREME_ACTIONS,
+    actionLabel: { open: "—", agree: "—", submit: "—" },
+    placeholder: "https://shop.supreme.com/products/box-logo-tee  또는  #jackets +box +logo -hoodie",
+    urlError: "슈프림 상품 주소(shop.supreme.com/products/…) 또는 키워드(+box +logo -jacket, #카테고리)가 아닙니다.",
+    // Shopify 는 숫자 id 가 아니라 handle(주소의 마지막 조각)이다.
+    // **키워드 사양도 받는다** — 링크 없이 "+box +logo -jacket" 처럼 적으면 그 조건에 걸리는 것을 산다.
+    isProductUrl: (url) => /(?:^|\/\/)shop\.supreme\.com\/products\/[A-Za-z0-9_-]+/.test(url.trim()) || /(^|\s)[+#-]\S/.test(url.trim()),
+    productCode: (url) => /\/products\/([A-Za-z0-9_-]+)/.exec(url.trim())?.[1] ?? url.trim(),
+    // 원본은 설정 파일을 시작할 때 한 번 읽는다 — 돌던 중에 고치면 다시 시작해야 반영된다.
+    liveFields: [],
+    modes: ["watch", "once", "buy", "dry-run", "status", "drop"],
+    // 재고 조회·담기·결제가 전부 공개 스토어프론트에서 된다 (게스트 체크아웃).
+    loginOptional: ["watch", "once", "buy", "dry-run", "status", "drop"],
+    // 한 프로필(사람 확인 통과 쿠키)로 여러 태스크가 동시에 결제하면 같은 장바구니를 밟는다.
+    oneTaskPerProfile: true,
+    monitors: true,
+    payProfileSite: null,
   },
 };
 

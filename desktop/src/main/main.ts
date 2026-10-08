@@ -12,6 +12,7 @@ import type {
 } from "../shared/types.js";
 import { MonitorManager } from "./monitorManager.js";
 import { MonitorStore } from "./monitorStore.js";
+import * as supremeOrder from "./supremeOrder.js";
 import { SessionManager, type LoginWindows, type PinVault } from "./sessions.js";
 import { isDiscordWebhook, sendFound, sendTest } from "./webhook.js";
 import { ADAPTERS } from "./sites/index.js";
@@ -449,6 +450,13 @@ function createWindow(): void {
 
 function registerIpc(): void {
   const m = () => manager;
+  ipcMain.handle("aio:supremeOrderGet", () => supremeOrder.stateOf());
+  ipcMain.handle("aio:supremeOrderSave", (_e, input: Parameters<typeof supremeOrder.saveOrder>[0]) => supremeOrder.saveOrder(input));
+  // 드랍 설정은 **씨앗 설정 파일**(sites.supreme.seed)의 drop 칸에 적는다.
+  ipcMain.handle("aio:supremeDropGet", () => supremeOrder.readDrop(loadSettings().sites.supreme.seed));
+  ipcMain.handle("aio:supremeDropSave", (_e, drop: Parameters<typeof supremeOrder.saveDrop>[1]) =>
+    supremeOrder.saveDrop(loadSettings().sites.supreme.seed, drop),
+  );
   ipcMain.handle("aio:listTasks", () => m().list());
   ipcMain.handle("aio:saveTask", (_e, t: TaskDef) => m().save(t));
   ipcMain.handle("aio:deleteTask", (_e, id: string) => m().remove(id));

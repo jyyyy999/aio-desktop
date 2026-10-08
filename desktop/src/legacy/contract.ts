@@ -18,6 +18,8 @@ import type { ACTIONS as BnkrActions } from "@bnkr/browser.js";
 import type { Config as BnkrConfig } from "@bnkr/config.js";
 import type { Target as BnkrTarget } from "@bnkr/targets.js";
 import type { BnkrTaskTarget, BnkrTimingFields } from "../main/sites/bnkr.js";
+import type { SupremeMonitorFields, SupremeTaskTarget, SupremeTimingFields } from "../main/sites/supreme.js";
+import type { BuyConfig, SupremeConfig, Target as SupremeTarget } from "@supreme/config.js";
 import type { LOTTE_LOGIN_PATH, LotteMonitorFields, LotteTaskTarget, LotteTimingFields } from "../main/sites/lotte.js";
 import type { NAVER_RATE, NaverMonitorFields } from "../main/sites/naver.js";
 import type { BNKR_ACTIONS, LOTTE_ACTIONS, NAVER_ACTIONS } from "../shared/sites.js";
@@ -73,4 +75,12 @@ export type Contract = [
   // 태스크 설정에 비우거나 적는 칸 (쿠키·비밀번호·웹훅·네이버 세션 경로·목록 훑기)
   Assert<"cookie" | "pg_password" | "discord_webhook_url" | "naver_session" | "discover" | "targets" extends KnownKeys<BnkrConfig> ? true : false>,
   Assert<Pick<BnkrConfig, "cookie" | "pg_password" | "discord_webhook_url" | "naver_session"> extends Record<string, string> ? true : false>,
+  // 슈프림: 우리가 태스크·모니터 홈에 적는 칸이 원본 설정에 이름이 박힌 칸이고 타입이 맞는가
+  Assert<keyof SupremeTaskTarget extends KnownKeys<SupremeTarget> ? true : false>,
+  Assert<Required<SupremeTaskTarget> extends Pick<SupremeTarget, keyof SupremeTaskTarget> ? true : false>,
+  Assert<keyof SupremeTimingFields extends KnownKeys<SupremeConfig> ? true : false>,
+  Assert<Pick<SupremeConfig, "check_interval_ms" | "max_retries" | "retry_delay_ms" | "monitor_duration_ms"> extends Record<string, number> ? true : false>,
+  Assert<keyof SupremeMonitorFields extends KnownKeys<SupremeConfig> ? true : false>,
+  Assert<keyof SupremeMonitorFields["buy"] extends KnownKeys<BuyConfig> ? true : false>,
+  Assert<Pick<SupremeConfig, "targets" | "cookie" | "discord_webhook_url"> extends Pick<SupremeConfig, "targets"> ? true : false>,
 ];

@@ -7,7 +7,7 @@
  * 어느 원본으로 돌리나. main 과 화면이 사이트 사이의 차이에 대해 아는 것은 이것뿐이다 —
  * 원본을 어떻게 띄우는지는 main/sites/ 의 어댑터가 안다.
  */
-export type SiteId = "lotte" | "naver" | "bnkr";
+export type SiteId = "lotte" | "naver" | "bnkr" | "supreme";
 
 /**
  * 태스크를 무엇으로 돌릴지. 원본의 명령줄 옵션에 하나씩 대응한다 (어댑터가 옮긴다).
@@ -406,9 +406,98 @@ export interface MonitorApi {
   onSwitched(cb: (e: { monitorId: string; taskId: string }) => void): () => void;
 }
 
+/**
+ * **슈프림 주문서 프로필** (사이트당 한 벌). 다른 사이트의 Profile(로그인·쿠키)과 완전히 다르다 —
+ * 슈프림은 게스트 체크아웃이라 로그인이 없고, **주문창에 들어가는 값 자체가 프로필**이다.
+ * 2026-10-08 에 실제 주문창을 열어 확인한 칸들 그대로다 (회사명·별도 청구지 주소는 없다).
+ */
+export interface SupremeOrder {
+  email: string;
+  first_name: string;
+  last_name: string;
+  /** HK · MO · SG · KR · TW */
+  country: string;
+  postal_code: string;
+  /** 시/도 — 라벨("Seoul")도 ISO("KR-11")도 된다 */
+  province: string;
+  city: string;
+  address1: string;
+  /** Apt, unit, etc. (선택) */
+  address2: string;
+  phone: string;
+  /** 주문창의 "Save this information for next time" */
+  save_shipping_information: boolean;
+  /* 동의 체크박스 — 결제 버튼이 눌리려면 필요하다. 기본 전부 켬. */
+  agree_age14: boolean;
+  agree_globale_tos: boolean;
+  agree_privacy: boolean;
+  agree_third_party: boolean;
+  agree_supreme_tos: boolean;
+}
+
+/** 비밀 — 화면에는 **있는지 없는지만** 오고, 값은 태스크를 띄울 때만 풀린다 (safeStorage 암호화). */
+export interface SupremeOrderSecrets {
+  card_number: string;
+  card_expiry: string;
+  card_cvv: string;
+  card_holder: string;
+  /** YYYY-MM-DD — 한국(Global-e) 카드 결제가 요구한다 */
+  date_of_birth: string;
+  /** 카드 비밀번호 앞 2자리 */
+  card_pin_first_two: string;
+  /**
+   * **개인통관고유부호** (P + 12자리). 한국으로 보내면 Global-e 가 주문창의
+   * "additional information" 에서 요구한다 (2026-10-08 확인).
+   */
+  personal_customs_code: string;
+}
+
+export interface SupremeOrderState {
+  order: SupremeOrder;
+  has: Record<keyof SupremeOrderSecrets, boolean>;
+  /** 이 PC 에서 암호화를 쓸 수 있나 */
+  encrypted: boolean;
+  orderPath: string;
+  secretPath: string;
+}
+
+export interface SupremeOrderApi {
+  get(): Promise<SupremeOrderState>;
+  /** 넘어온 비밀만 갈아 끼운다 (빈 값은 "안 바꿈"). clearSecrets 로 전부 지운다. */
+  save(input: { order: SupremeOrder; secrets?: Partial<SupremeOrderSecrets>; clearSecrets?: boolean }): Promise<SupremeOrderState>;
+  /** 드랍 설정 — 씨앗 설정(aio/node/supreme_config.json)의 drop 에 적는다. */
+  getDrop(): Promise<SupremeDropState>;
+  saveDrop(drop: SupremeDrop): Promise<SupremeDropState>;
+}
+
+/** 드랍(큐 태우기) 설정 — 화면에서 정하고 씨앗 설정 파일에 적힌다. */
+export interface SupremeDrop {
+  /** 큐를 태울 미끼 상품 (아무 상품이나) */
+  preload_url: string;
+  /** 드랍 시각 HH:MM:SS (비우면 태스크 폼의 드랍 시각을 씀) */
+  drop_at: string;
+  /** 드랍 몇 분 전에 미끼를 담을까 */
+  preload_lead_minutes: number;
+  /** 드랍 때 바꿔 담을 상품 (비우면 태스크의 대상) */
+  swap_to_url: string;
+  /** 대기열에서 기다리는 최대 시간(분) */
+  queue_timeout_minutes: number;
+  /** 드랍 시각을 이만큼 안쪽으로 지났으면 "지금" 으로 본다 */
+  late_grace_minutes: number;
+}
+
+export interface SupremeDropState {
+  drop: SupremeDrop;
+  /** 어디에 적혔나 (씨앗 설정 파일) */
+  seedPath: string;
+  seedExists: boolean;
+}
+
 /** preload 가 window.aio 로 여는 것. */
 export interface AioApi {
   monitor: MonitorApi;
+  /** 슈프림 주문서 프로필 (사이트당 한 벌 · 카드·생년월일·PIN 은 암호화). */
+  supremeOrder: SupremeOrderApi;
   listTasks(): Promise<TaskDef[]>;
   saveTask(task: TaskDef): Promise<TaskDef[]>;
   deleteTask(id: string): Promise<TaskDef[]>;

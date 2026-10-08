@@ -13,6 +13,7 @@
     "paths": {
       "@lotte/*": ["../node/src/lotte-test/*"],
       "@bnkr/*": ["../node/src/bnkr-test/*"],
+      "@supreme/*": ["../node/src/supreme/*"],
       "@naver/*": ["../../naver/ts/src/*"]
     }
   },

@@ -8,6 +8,11 @@ import type {
   TaskDef, TaskMode, TaskRuntime, TaskStatus, TimingDefaults,
 } from "../shared/types";
 import { FoundAlerts, MONITOR_LOG, MonitorsPage } from "./Monitors";
+import { SupremeOrderPage } from "./SupremeOrder";
+import {
+  SUPREME_CATEGORIES, describeSupremeCategories, describeSupremeOption, hasSupremeKeyword, isSupremeProductUrl,
+  joinSupremeOption, splitSupremeOption, supremeCategories, supremeKeywords, withSupremeCategory,
+} from "../shared/supremeSpec";
 
 const aio = window.aio;
 
@@ -38,7 +43,7 @@ export const LOGIN_LABEL: Record<LoginStatus, string> = {
   error: "확인 못 함",
 };
 
-type View = "tasks" | "monitors" | "profiles";
+type View = "tasks" | "monitors" | "profiles" | "supreme-order";
 
 /** 새 태스크가 처음 고를 프로필 — 그 사이트에서 로그인된 것, 없으면 아무거나. */
 /**
@@ -180,7 +185,22 @@ export function idleRuntime(id: string): TaskRuntime {
 }
 
 function actionLabel(t: TaskDef): string {
+  // 고를 것이 없는 사이트(슈프림)는 결제 버튼까지 간다.
+  if (!SITES[t.site].actions.length) return "결제 버튼까지";
   return t.action ? SITES[t.site].actionLabel[t.action] : "설정 따름";
+}
+
+/** 표·태스크 창의 상품 칸 — 슈프림 키워드는 키워드를 이름으로, 카테고리·색·사이즈를 아래 줄로. */
+export function targetText(t: TaskDef): { name: string; sub: string } {
+  const code = SITES[t.site].productCode(t.url);
+  if (t.site === "supreme" && t.url.trim() && !isSupremeProductUrl(t.url)) {
+    return {
+      name: t.label || supremeKeywords(t.url) || code,
+      sub: [`카테고리 ${describeSupremeCategories(t.url)}`, describeSupremeOption(t.option)].filter(Boolean).join(" · "),
+    };
+  }
+  const option = t.site === "supreme" ? describeSupremeOption(t.option) : t.option;
+  return { name: t.label || code, sub: [code, option].filter(Boolean).join(" · ") };
 }
 
 function clock(ms: number): string {
@@ -415,6 +435,9 @@ export function App() {
             <span>프로필{issues.length > 0 && <span className="warn-dot" title="로그인이 필요한 태스크가 있습니다" />}</span>
             <span className="count">{profiles.length}</span>
           </button>
+          <button type="button" className={`side-item ${view === "supreme-order" ? "on" : ""}`} onClick={() => setView("supreme-order")}>
+            <span>슈프림 주문서</span>
+          </button>
         </nav>
         <div className="content">
           {view === "tasks" && (
@@ -428,8 +451,10 @@ export function App() {
             </nav>
           )}
 
-          <main className="grid">
-            {view === "monitors" ? (
+          <main className={view === "supreme-order" ? "grid single" : "grid"}>
+            {view === "supreme-order" ? (
+              <SupremeOrderPage />
+            ) : view === "monitors" ? (
               <MonitorsPage
                 monitors={monitors} profiles={profiles} infos={infos} selected={selected} now={now}
                 onSelect={setSelected}
@@ -476,7 +501,7 @@ export function App() {
                     {shown.map((t, i) => {
                       const rt = rtOf(t.id);
                       const live = LIVE.includes(rt.status);
-                      const code = SITES[t.site].productCode(t.url);
+                      const target = targetText(t);
                       const p = profileOf(t.profileId);
                       const issue = loginIssue(t, profiles);
                       // 한 프로필에 하나인 사이트(oneTaskPerProfile)에서 다른 태스크·모니터가 이 프로필을 쓰고 있으면 ▶ 가 거절된다.
@@ -502,9 +527,9 @@ export function App() {
                             )}
                           </td>
                           <td>
-                            <div className="name">{t.label || code || "(주소 없음)"}</div>
+                            <div className="name">{target.name || "(주소 없음)"}</div>
                             <div className="muted small">
-                              {code}{t.option && ` · ${t.option}`} · {t.ea}개
+                              {target.sub && `${target.sub} · `}{t.ea}개
                               {t.max_price ? ` · ≤${t.max_price.toLocaleString()}원` : ""}
                             </div>
                           </td>
@@ -561,7 +586,7 @@ export function App() {
                     {!shown.length && (
                       <tr>
                         <td colSpan={11} className="empty">
-                          태스크가 없습니다. <b>+ 태스크</b> 로 롯데온·네이버 상품 주소를 넣으세요.
+                          태스크가 없습니다. <b>+ 태스크</b> 로 상품 주소(슈프림은 키워드도)를 넣으세요.
                         </td>
                       </tr>
                     )}
@@ -570,7 +595,8 @@ export function App() {
               </section>
             )}
 
-            <section className="logs">
+            {/* 주문서 화면에는 로그가 없다 — 아래 칸을 비워 두지 않고 주문서가 다 쓴다. */}
+            {view !== "supreme-order" && <section className="logs">
               <div className="logs-head">
                 <span>
                   로그 · <b>{selected === PREPARE_LOG ? "준비 (빌드·설치)"
@@ -599,7 +625,7 @@ export function App() {
                 )}
               </div>
               <LogView lines={logs} />
-            </section>
+            </section>}
           </main>
         </div>
       </div>
@@ -793,6 +819,13 @@ function TaskForm({ task, infos, live, profiles, usersOf, onLogin, onUpsertProfi
   const set = <K extends keyof TaskDef>(k: K, v: TaskDef[K]) => setT((prev) => ({ ...prev, [k]: v }));
   const spec = SITES[t.site];
   const valid = spec.isProductUrl(t.url);
+  const supreme = t.site === "supreme";
+  const productUrl = supreme && isSupremeProductUrl(t.url);
+  const option = splitSupremeOption(t.option);
+  // `#jackets` 만 적으면 그 컬렉션의 아무거나 살 수 있다 — 원본도 키워드 없이는 돌지 않는다.
+  const keywordError = supreme && valid && !productUrl && !hasSupremeKeyword(t.url)
+    ? "키워드(+box +logo -jacket)를 하나 이상 적으세요 — 카테고리만으로는 사지 않습니다."
+    : null;
   /** 고른 "어디까지" 에서 원본이 실제로 어디서 멈추나 — 씨앗 설정(비밀번호·마지막 확인)에 따라 다르다. */
   const info = infos.find((i) => i.site === t.site);
   // 결제 비밀번호는 고른 프로필의 것 (결제창 로그인 프로필이 먼저) — 있으면 원본이 자판까지 누른다.
@@ -840,7 +873,7 @@ function TaskForm({ task, infos, live, profiles, usersOf, onLogin, onUpsertProfi
         onClick={(e) => e.stopPropagation()}
         onSubmit={(e) => {
           e.preventDefault();
-          if (valid && !timingError && !profileError) onSave({ ...t, url: t.url.trim(), label: t.label.trim(), option: t.option.trim() });
+          if (valid && !keywordError && !timingError && !profileError) onSave({ ...t, url: t.url.trim(), label: t.label.trim(), option: t.option.trim() });
         }}
       >
         <h2>{task.url ? "태스크 고치기" : "새 태스크"}</h2>
@@ -866,43 +899,104 @@ function TaskForm({ task, infos, live, profiles, usersOf, onLogin, onUpsertProfi
           />
         )}
         <label>
-          상품 주소
+          {supreme ? "상품 주소 또는 키워드" : "상품 주소"}
           <input autoFocus value={t.url} placeholder={spec.placeholder} onChange={(e) => setUrl(e.target.value)} />
           {!valid && t.url && <span className="err">{spec.urlError}</span>}
+          {keywordError && <span className="err">{keywordError}</span>}
         </label>
         <label>
-          이름 <span className="muted">(비워 두면 상품번호)</span>
+          <span>이름 <span className="muted">{supreme ? "(비워 두면 키워드·상품 handle)" : "(비워 두면 상품번호)"}</span></span>
           <input value={t.label} onChange={(e) => set("label", e.target.value)} />
         </label>
-        <div className="row">
-          <label>
-            옵션 <span className="muted">(글자 일부)</span>
-            <input value={t.option} onChange={(e) => set("option", e.target.value)} />
-          </label>
-          <label className="narrow">
-            수량
-            <input type="number" min={1} value={t.ea} onChange={(e) => set("ea", Math.max(1, Number(e.target.value) || 1))} />
-          </label>
-          <label>
-            상한가 <span className="muted">(0 = 없음)</span>
-            <input type="number" min={0} value={t.max_price} onChange={(e) => set("max_price", Math.max(0, Number(e.target.value) || 0))} />
-          </label>
-        </div>
-        <div className="row">
-          <label>
-            모드
-            <select value={t.mode} onChange={(e) => set("mode", e.target.value as TaskMode)}>
-              {spec.modes.map((k) => <option key={k} value={k}>{MODE_LABEL[k]}</option>)}
-            </select>
-          </label>
-          <label>
-            어디까지
-            <select value={t.action} onChange={(e) => set("action", e.target.value as OrderAction)}>
-              <option value="">설정 따름</option>
-              {spec.actions.map((a) => <option key={a} value={a}>{spec.actionLabel[a]}</option>)}
-            </select>
-          </label>
-        </div>
+        {supreme ? (
+          // 슈프림은 **카테고리 · 색 · 사이즈를 따로** 고른다 — 카테고리는 주소 칸의 `#…` 를 바꿔 쓰고(훑을 컬렉션),
+          // 색은 상품 이름에서, 사이즈는 variant 에서 고른다. 색·사이즈는 한 칸(option)에 "색 / 사이즈" 로 저장한다.
+          <>
+            <div className="row">
+              <label>
+                <span>카테고리 <span className="muted">(좁히면 빠릅니다)</span></span>
+                <select
+                  value={supremeCategories(t.url)[0] ?? ""} disabled={productUrl}
+                  title={productUrl ? "상품 주소로 사면 카테고리가 필요 없습니다" : "주소 칸의 #카테고리 를 바꿉니다"}
+                  onChange={(e) => set("url", withSupremeCategory(t.url, e.target.value))}
+                >
+                  <option value="">전체 (all)</option>
+                  {SUPREME_CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+                  {(() => {
+                    const own = supremeCategories(t.url)[0];
+                    return own && !SUPREME_CATEGORIES.some((c) => c.id === own) ? <option value={own}>{own}</option> : null;
+                  })()}
+                </select>
+              </label>
+              <label>
+                <span>색 <span className="muted">(상품명의 색)</span></span>
+                <input
+                  value={option.color} placeholder="Predator Camo"
+                  onChange={(e) => set("option", joinSupremeOption(e.target.value, option.size))}
+                />
+              </label>
+              <label>
+                사이즈
+                <input
+                  value={option.size} placeholder="Large"
+                  onChange={(e) => set("option", joinSupremeOption(option.color, e.target.value))}
+                />
+              </label>
+            </div>
+            <div className="row">
+              <label className="narrow">
+                수량
+                <input type="number" min={1} value={t.ea} onChange={(e) => set("ea", Math.max(1, Number(e.target.value) || 1))} />
+              </label>
+              <label>
+                <span>상한가 <span className="muted">(0 = 없음)</span></span>
+                <input type="number" min={0} value={t.max_price} onChange={(e) => set("max_price", Math.max(0, Number(e.target.value) || 0))} />
+              </label>
+              <label>
+                모드
+                <select value={t.mode} onChange={(e) => set("mode", e.target.value as TaskMode)}>
+                  {spec.modes.map((k) => <option key={k} value={k}>{MODE_LABEL[k]}</option>)}
+                </select>
+              </label>
+            </div>
+            <p className="muted small modal-text">
+              어디까지 — 슈프림은 고를 것이 없습니다: 담기 → 배송 → 카드 → 동의 → <b>결제 버튼까지</b> 자동이고, 캡차·3DS 만 사람이 합니다.
+              주문서(배송·카드)는 왼쪽 <b>슈프림 주문서</b> 에서 적습니다.
+            </p>
+          </>
+        ) : (
+          <>
+            <div className="row">
+              <label>
+                옵션 <span className="muted">(글자 일부)</span>
+                <input value={t.option} onChange={(e) => set("option", e.target.value)} />
+              </label>
+              <label className="narrow">
+                수량
+                <input type="number" min={1} value={t.ea} onChange={(e) => set("ea", Math.max(1, Number(e.target.value) || 1))} />
+              </label>
+              <label>
+                <span>상한가 <span className="muted">(0 = 없음)</span></span>
+                <input type="number" min={0} value={t.max_price} onChange={(e) => set("max_price", Math.max(0, Number(e.target.value) || 0))} />
+              </label>
+            </div>
+            <div className="row">
+              <label>
+                모드
+                <select value={t.mode} onChange={(e) => set("mode", e.target.value as TaskMode)}>
+                  {spec.modes.map((k) => <option key={k} value={k}>{MODE_LABEL[k]}</option>)}
+                </select>
+              </label>
+              <label>
+                어디까지
+                <select value={t.action} onChange={(e) => set("action", e.target.value as OrderAction)}>
+                  <option value="">설정 따름</option>
+                  {spec.actions.map((a) => <option key={a} value={a}>{spec.actionLabel[a]}</option>)}
+                </select>
+              </label>
+            </div>
+          </>
+        )}
         {hint && (
           <p className="hint">
             {hint}
@@ -915,7 +1009,7 @@ function TaskForm({ task, infos, live, profiles, usersOf, onLogin, onUpsertProfi
         {info && <TimingFields t={t} timing={info.timing} set={set} />}
         <div className="modal-actions">
           <button type="button" className="btn ghost" onClick={onCancel}>취소</button>
-          <button type="submit" className="btn primary" disabled={!valid || !!timingError || !!profileError}>저장</button>
+          <button type="submit" className="btn primary" disabled={!valid || !!keywordError || !!timingError || !!profileError}>저장</button>
         </div>
       </form>
     </div>
@@ -1485,6 +1579,7 @@ function ProfileModal({ edit, site: first, profiles, onSaved, onLogin, onClose }
 
 /** 로그인 창이 어떻게 뜨나 — 롯데는 매니저가 창을 띄우고, 네이버는 원본 --login 이 띄운다. */
 const LOGIN_HOW: Record<SiteId, string> = {
+  supreme: "로그인 없이도 살 수 있습니다(게스트 체크아웃). 창을 띄우면 사람 확인(Cloudflare)·hCaptcha 를 직접 통과해 주세요 — 통과한 쿠키가 태스크로 넘어갑니다.",
   lotte: "로그인 창이 뜨면 창 안에서 직접 로그인하세요 (캡차·2단계 인증 포함).",
   naver: "원본의 로그인 창(--login)이 뜨면 창 안에서 직접 로그인하세요.",
   bnkr: "로그인 창이 뜨면 창 안에서 직접 로그인하세요 (reCAPTCHA 포함). 토큰이 한 시간짜리라 오래 두었으면 다시 로그인하세요.",
@@ -1704,6 +1799,7 @@ function PinAskModal({ profile, onSetPin, onStart, onClose }: {
 }
 
 const ROOT_HINT: Record<SiteId, string> = {
+  supreme: "원본 프로젝트 (aio/node) — dist/supreme/index.js 를 들인다 (Shopify 표준 목록·cart/add.js 로 담는다)",
   lotte: "원본 프로젝트 (aio/node) — dist/lotte-test/index.js 를 들인다",
   naver: "원본 프로젝트 (naver/ts) — src/cli.ts 를 tsx 로 들인다",
   bnkr: "원본 프로젝트 (aio/node) — dist/bnkr-test/index.js 를 들인다",

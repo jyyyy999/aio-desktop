@@ -36,6 +36,12 @@ const api: AioApi = {
     onRemoved: (cb) => listen<string>("monitor:removed", cb),
     onSwitched: (cb) => listen<{ monitorId: string; taskId: string }>("monitor:switched", cb),
   },
+  supremeOrder: {
+    get: () => call("supremeOrderGet"),
+    save: (input) => call("supremeOrderSave", input),
+    getDrop: () => call("supremeDropGet"),
+    saveDrop: (drop) => call("supremeDropSave", drop),
+  },
   listTasks: () => call("listTasks"),
   saveTask: (t) => call("saveTask", t),
   deleteTask: (id) => call("deleteTask", id),

@@ -38,7 +38,7 @@ export function monitorIntervalWarning(site: SiteId, ms: number, timing: TimingD
  *          아래는 드랍 걸음(--drop)으로 돈다
  *   네이버 2초 — 상품 하나를 이보다 자주 보면 원본이 요청률 거부선(분당 30회)에 걸려 시작하지 않는다
  */
-export const MONITOR_MIN_INTERVAL_MS: Record<SiteId, number> = { lotte: 500, naver: 2000, bnkr: 3000 };
+export const MONITOR_MIN_INTERVAL_MS: Record<SiteId, number> = { lotte: 500, naver: 2000, bnkr: 3000, supreme: 2500 };
 
 export const ON_FOUND_LABEL: Record<MonitorOnFound, string> = {
   notify: "알림만",
@@ -64,6 +64,7 @@ export function monitorProblem(m: MonitorInput): string | null {
   if (m.onFound !== "notify" && m.onFound !== "switch_to_task") return `모르는 발견 시 동작입니다: ${String(m.onFound)}`;
   // 네이버 원본은 조회도 로그인한 브라우저로 한다 (Node fetch 는 429). 롯데는 재고 API 가 공개라 감시에는 없어도 된다.
   if (!m.profileId && m.site === "naver") return "네이버 모니터는 로그인 프로필이 있어야 합니다 — 네이버는 조회도 로그인 세션으로 합니다.";
-  if (!m.profileId && m.onFound === "switch_to_task") return "구매 전환을 하려면 로그인 프로필이 필요합니다.";
+  // 슈프림은 게스트 체크아웃이라 로그인 없이도 살 수 있다 (프로필은 사람 확인 통과 쿠키용).
+  if (!m.profileId && m.site !== "supreme" && m.onFound === "switch_to_task") return "구매 전환을 하려면 로그인 프로필이 필요합니다.";
   return null;
 }
