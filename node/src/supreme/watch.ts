@@ -10,7 +10,7 @@
  * 요청 간격은 실패에 따라 물러난다 (backoff). 차단 화면(사람 확인)을 만나면 hooks.onBlocked 로
  * 창을 사람에게 넘기고, 사람이 통과할 때까지 기다린 뒤 이어서 본다 — 자동으로 뚫지 않는다.
  */
-import { type DropEvent, type BuyRule, type MonitorRule, buildSnapshot, decide, describe, diff, matchProduct, type Snapshot } from "./match.js";
+import { type DropEvent, type BuyRule, type MonitorRule, buildSnapshot, decide, describe, diff, matchProduct, needsFullName, type Snapshot, withFullName } from "./match.js";
 import { LINES } from "./lines.js";
 import type { Product, Shop } from "./site.js";
 
@@ -205,8 +205,22 @@ export async function watchLoop(
       //    조건에 안 맞는 상품 페이지까지 전부 받아야 한다 (36개 = 7초, 2026-10-08).
       const pre = matchProduct(product, rule);
       if (!pre.ok) {
-        log.note(`${describe(product, event.variant)} · 사지 않음: ${pre.reason}`);
-        continue;
+        if (!needsFullName(product, rule)) {
+          log.note(`${describe(product, event.variant)} · 사지 않음: ${pre.reason}`);
+          continue;
+        }
+        // 1-1) **색 보완** — 목록 카드에 색이 빠져 오는 판이 있다 (카드가 늦게 그려진다, 2026-10-08).
+        //      키워드가 일부 걸린 후보만 상품 페이지 JSON 의 이름으로 다시 본다 (요청은 후보 수만큼만 는다).
+        const resolved = await shop.resolve(product.handle);
+        const full = resolved ? withFullName(product, resolved) : null;
+        const again = full ? matchProduct(full, rule) : null;
+        if (!full || !again?.ok) {
+          const why = again ? again.reason : `${pre.reason} · 상품 페이지 해석 실패(${shop.lastResolveNote})`;
+          log.note(`${describe(full ?? product, event.variant)} · 사지 않음: ${why} (상품 페이지 이름으로도 확인)`);
+          continue;
+        }
+        log.note(`${product.title} · 이름 보완 → ${full.title}`);
+        product = full;
       }
 
       // 2) 살 만한 것만 variant 를 해석한다 (없으면 /products/<handle>.js → 막히면 상품 페이지 JSON).

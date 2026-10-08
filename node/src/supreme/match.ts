@@ -116,6 +116,32 @@ export function matchProduct(product: Product, rule: MonitorRule): { ok: boolean
 }
 
 /**
+ * **이름 보완 후보인가** — 목록 카드가 늦게 그려져 이름에서 색이 빠져 오는 판이 있다
+ * ("GORE-TEX N-2B Jacket - Predator Camo" 가 "GORE-TEX N-2B Jacket" 으로 온다 → `+camo` 가 빗나간다).
+ * HTML 카드 상품 중 제외·카테고리·상한가는 통과하고, 포함 키워드가 **일부는 걸리고 일부만 빠진** 것만 후보다.
+ * 하나도 안 걸린 상품까지 상품 페이지를 받으면 요청이 목록 크기만큼 늘어난다.
+ */
+export function needsFullName(product: Product, rule: MonitorRule): boolean {
+  if (!product.partial || rule.include.length < 2) return false;
+  const text = lower(`${product.title} ${product.type} ${product.tags}`);
+  const hits = rule.include.filter((needle) => text.includes(lower(needle))).length;
+  if (hits === 0 || hits === rule.include.length) return false;
+  return matchProduct(product, { ...rule, include: [] }).ok;
+}
+
+/**
+ * 목록 카드에 상품 페이지 JSON(Shop.resolve)의 이름을 덧댄다 — 긴 쪽을 이름으로, 나머지는 매칭 재료(tags)로.
+ * variant 의 색은 **색이 하나뿐일 때만** 넣는다 (여러 색이면 넣지 않는다 — 넣으면 다른 색 variant 를 담을 수 있다).
+ */
+export function withFullName(listed: Product, resolved: Product): Product {
+  const colors = [...new Set(resolved.variants.map((v) => v.color.trim()).filter(Boolean))];
+  const title = resolved.title.length >= listed.title.length ? resolved.title : listed.title;
+  const other = title === resolved.title ? listed.title : resolved.title;
+  const tags = [resolved.tags, listed.tags, other === title ? "" : other, colors.length === 1 ? colors[0]! : ""].filter(Boolean).join(", ");
+  return { ...resolved, handle: resolved.handle || listed.handle, title, url: listed.url || resolved.url, tags };
+}
+
+/**
  * 사이즈 이름 맞추기. 사람은 "L" 이라고 적고 사이트는 "Large" 라고 쓴다 —
  * 2026-10-08 에 이걸 못 맞춰서 **원하는 L 을 두고 Small 을 담았다.**
  */

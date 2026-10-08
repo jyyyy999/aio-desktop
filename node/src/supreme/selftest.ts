@@ -12,10 +12,10 @@ import { join } from "node:path";
 import { BASE, nextDropTime } from "./config.js";
 import { formatQueueLine, looksLikeQueue, parseQueue, queueScript } from "./queue.js";
 import { LINES, LINE_PATTERNS } from "./lines.js";
-import { buildSnapshot, decide, describeKeywords, describeOption, diff, isKeywordSpec, matchProduct, parseHandle, parseKeywordSpec, parseOptionSpec, pickVariant, sizeEquals, type BuyRule, type MonitorRule } from "./match.js";
+import { buildSnapshot, decide, describeKeywords, describeOption, diff, isKeywordSpec, matchProduct, needsFullName, parseHandle, parseKeywordSpec, parseOptionSpec, pickVariant, sizeEquals, withFullName, type BuyRule, type MonitorRule } from "./match.js";
 import { agreementsScript, chooseCardMethodScript, clickContinueScript, fillScript, saveInfoScript, stageScript } from "./checkout-fill.js";
 import { focusScript, probeScript, tokenScript, unionRect, needsHuman, unfocusScript, type CaptchaProbe } from "./captcha.js";
-import { normalizeProduct } from "./site.js";
+import { normalizeCard, normalizeProduct } from "./site.js";
 import { Shop } from "./site.js";
 import { SupremeBrowser } from "./browser.js";
 import { addToCart, runCheckout, type Profile } from "./checkout.js";
@@ -334,6 +334,74 @@ async function browserTests(): Promise<void> {
 }
 
 /**
+ * 색 보완 — 목록 카드에 색이 빠져 와도(카드가 늦게 그려진다) `+camo` 가 걸려야 한다.
+ * 크롬 없이 가짜 Shop 으로 감시 한 바퀴를 돈다: 후보만 상품 페이지 이름으로 보완하고, 나머지는 요청하지 않는다.
+ */
+async function colorFillTests(): Promise<void> {
+  console.log("\n== 색 보완 (목록 카드에 색이 빠져 온 판) ==");
+  const card = (handle: string, title: string) =>
+    normalizeCard({ handle, title, url: `/products/${handle}`, soldOut: false, image: "", price: 398 });
+  const jacketPage = (handle: string, title: string) => ({
+    id: handle, handle, title, product_type: "Jackets", options: ["Size"],
+    variants: [{ id: `${handle}-l`, title: "Large", option1: "Large", available: true, price: 39800 }],
+  });
+  const pages: Record<string, Parameters<typeof normalizeProduct>[0]> = {
+    "n2b-camo": jacketPage("n2b-camo", "GORE-TEX N-2B Jacket - Predator Camo"),
+    "n2b-black": jacketPage("n2b-black", "GORE-TEX N-2B Jacket - Black"),
+    "box-logo-tee": RAW,
+  };
+  const listed = [card("n2b-camo", "GORE-TEX N-2B Jacket"), card("n2b-black", "GORE-TEX N-2B Jacket"), card("box-logo-tee", "Box Logo Tee")];
+  const resolvedHandles: string[] = [];
+  const fakeShop = {
+    lastResolveNote: "",
+    async list() {
+      return { mode: "html", status: 200, products: listed, hero: "", note: "" };
+    },
+    async pageState() {
+      return { url: "", title: "", blocked: false, challenge: false, text: "" };
+    },
+    async resolve(handle: string) {
+      resolvedHandles.push(handle);
+      const raw = pages[handle];
+      return raw ? normalizeProduct(raw) : null;
+    },
+  } as unknown as Shop;
+
+  const camoRule = rule({ include: ["gore", "tex", "camo"], silentFirstScan: false });
+  ok("일부 키워드가 걸린 카드는 보완 후보", needsFullName(listed[0]!, camoRule));
+  ok("하나도 안 걸린 카드는 후보가 아니다(요청 안 함)", needsFullName(listed[2]!, camoRule) === false);
+  ok("키워드 하나뿐이면 후보가 아니다(목록 전체를 받게 된다)", needsFullName(listed[0]!, rule({ include: ["camo"] })) === false);
+  ok("JSON 으로 온 상품은 후보가 아니다", needsFullName({ ...listed[0]!, partial: false }, camoRule) === false);
+  const multiColor = normalizeProduct(RAW);
+  ok("여러 색이면 variant 색을 이름에 넣지 않는다", !/white/i.test(withFullName(card("box-logo-tee", "Box Logo Tee"), multiColor).tags));
+  const oneColor = normalizeProduct({ ...RAW, variants: RAW.variants.filter((v) => v.option1 === "White") });
+  ok("한 색이면 variant 색도 매칭 재료", /white/i.test(withFullName(card("box-logo-tee", "Box Logo Tee"), oneColor).tags));
+
+  const lines: string[] = [];
+  const capture = {
+    note: (t: string) => lines.push(t),
+    ok: (t: string) => lines.push(t),
+    warn: (t: string) => lines.push(t),
+    error: (t: string) => lines.push(t),
+    step: (t: string) => lines.push(t),
+    tick: (t: string) => lines.push(t),
+  };
+  await watchLoop(
+    fakeShop,
+    camoRule,
+    buyRule(),
+    { origin: "https://mock", collections: ["all"], dryRun: true, maxRounds: 1, intervalMs: 0, jitterMs: 0 },
+    { async onEvents() { /* 드라이런에서는 안 부른다 */ } },
+    capture,
+    () => false,
+  );
+  const found = lines.filter((line) => line.includes("[dry-run]"));
+  ok("색이 빠진 카드도 +camo 로 걸린다", found.length === 1 && found[0]!.includes("/products/n2b-camo"), found.join(" / ") || lines.join(" / "));
+  ok("다른 색(Black)은 보완해도 안 걸린다", !found.some((line) => line.includes("n2b-black")));
+  ok("요청은 후보 수만큼만", resolvedHandles.sort().join(",") === "n2b-black,n2b-camo", resolvedHandles.join(","));
+}
+
+/**
  * HTML 폴백 상점 — 진짜 슈프림이 이 모양이다 (products.json 이 막혀 있다).
  * variant 가 없으므로 감시가 **발견**을 내려면 /products/<handle>.js 로 해석해야 한다.
  */
@@ -395,6 +463,7 @@ async function htmlFallbackTests(): Promise<void> {
 async function main(): Promise<void> {
   console.log("== 슈프림 시험 ==");
   pureTests();
+  await colorFillTests();
   if (process.argv.includes("--browser")) {
     await browserTests();
     await htmlFallbackTests();
