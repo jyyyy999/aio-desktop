@@ -35,6 +35,7 @@ import { formatQueueLine, peekQueue, waitThroughQueue } from "./queue.js";
 import { Shop, type Product, type Variant } from "./site.js";
 import { SupremeBrowser, BrowserError } from "./browser.js";
 import { addToCart, runCheckout, type BuyOptions, type Profile as CheckoutProfile } from "./checkout.js";
+import { passCheckpoint } from "./checkpoint.js";
 import { notifyBlocked, notifyCaptcha, notifyFound, notifyPaid } from "./notify.js";
 import { watchLoop, type WatchOptions } from "./watch.js";
 
@@ -644,11 +645,6 @@ async function runPreloadDrop(cfg: SupremeConfig, state: State, args: Args): Pro
   if (gaps.length) log.warn(`이 칸들은 설정에 없어 창에서 직접 채워야 합니다: ${gaps.join(", ")}`);
 
   const checkoutUrl = `${cfg.origin}/checkout`;
-  const queueOpts = {
-    url: checkoutUrl,
-    timeoutMs: Math.max(1, drop.queue_timeout_minutes) * 60_000,
-    reloadEveryMs: 60_000,
-  };
 
   UI.banner("SUPREME · 드랍 (큐 태우기)", [
     `드랍 ${new Date(dropAt).toLocaleString("ko-KR")} · 미끼 ${drop.preload_lead_minutes}분 전에 담습니다`,
@@ -659,6 +655,17 @@ async function runPreloadDrop(cfg: SupremeConfig, state: State, args: Args): Pro
   ]);
 
   const browser = await openBrowser(cfg);
+  const queueOpts = {
+    url: checkoutUrl,
+    timeoutMs: Math.max(1, drop.queue_timeout_minutes) * 60_000,
+    reloadEveryMs: 60_000,
+    // 주문창으로 가는 길에 체크포인트(hCaptcha)가 끼면 사람에게 넘긴다 — 버튼은 대신 누른다.
+    onCheckpoint: async (): Promise<boolean> => {
+      const passed = await passCheckpoint(browser, { captcha: { timeoutMs: cfg.captcha.timeout_ms } });
+      if (!passed.ok) log.error(LINES.failed("체크포인트", passed.reason));
+      return passed.ok;
+    },
+  };
   const shop = await shopOf(browser, cfg);
   try {
     // **실행할 때마다 장바구니를 비운다.** 지난 판의 미끼·실패한 담기가 남아 있으면

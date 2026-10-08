@@ -14,6 +14,7 @@
  *     (어댑터의 progress.queue 정규식과 글자까지 같아야 한다 — src/main/sites/supreme.ts)
  */
 import { log, sayOk, sayStar, tick } from "./log.js";
+import { isCheckpointUrl } from "./checkpoint.js";
 
 export interface QueueInfo {
   /** 대기열 페이지다 */
@@ -185,6 +186,11 @@ export interface QueueOptions {
   reloadEveryMs: number;
   /** 한 번 보고 끝 (대기열 상태 점검용) */
   once?: boolean;
+  /**
+   * **체크포인트(/checkpoint — hCaptcha)** 를 만났을 때 — 사람에게 넘겨 풀고 통과했으면 true.
+   * 없으면 체크포인트에서는 주소를 다시 열지 않고 기다리기만 한다 (다시 열면 캡차가 처음부터 다시 그려진다).
+   */
+  onCheckpoint?: () => Promise<boolean>;
 }
 
 export const DEFAULT_QUEUE_OPTIONS: QueueOptions = { url: "/checkout", timeoutMs: 30 * 60_000, reloadEveryMs: 60_000 };
@@ -222,8 +228,22 @@ export async function waitThroughQueue(host: QueueHost, options: Partial<QueueOp
       return { ok: true, waitedMs: Date.now() - started, reason: sawQueue ? "대기열 통과" : "대기열 없음", info, rounds };
     }
 
+    const atCheckpoint = isCheckpointUrl(info?.url);
     if (opts.once) {
-      return { ok: false, waitedMs: Date.now() - started, reason: info?.inQueue ? formatQueueLine(info) : "대기열도 주문창도 아닙니다", info, rounds };
+      const reason = info?.inQueue ? formatQueueLine(info) : atCheckpoint ? "체크포인트(hCaptcha) 화면입니다" : "대기열도 주문창도 아닙니다";
+      return { ok: false, waitedMs: Date.now() - started, reason, info, rounds };
+    }
+
+    if (atCheckpoint) {
+      // 체크포인트 — 사람이 캡차를 푼다. **주소를 다시 열지 않는다** (8초마다 다시 열어 캡차를 날리던 자리).
+      if (opts.onCheckpoint) {
+        if (!(await opts.onCheckpoint())) {
+          return { ok: false, waitedMs: Date.now() - started, reason: "체크포인트(사람 확인)를 넘지 못했습니다", info, rounds };
+        }
+      }
+      lastReload = Date.now();
+      await host.sleep(1000);
+      continue;
     }
 
     if (info?.inQueue) {

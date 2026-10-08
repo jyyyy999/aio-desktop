@@ -13,6 +13,7 @@
  * 어느 단계든 한 번 실패하면 창을 사람에게 보여 주고 멈춘다 — 조용히 엉뚱한 주문을 넣지 않는다.
  */
 import { type CaptchaOptions, clearCaptchaIfAny, type CaptchaWindowHost } from "./captcha-window.js";
+import { isCheckpointUrl, passCheckpoint } from "./checkpoint.js";
 import { log } from "./log.js";
 import {
   agreementsScript,
@@ -237,17 +238,31 @@ export async function runCheckout(
   // 1) 체크아웃 페이지
   host.note(`체크아웃으로 갑니다 (장바구니 ${cart.count}개)`);
   await host.goto(`${origin}/checkout`);
-  const firstStage = (await waitFor(
-    host,
-    stageScript(),
-    (v) => {
-      const s = v as StageReport | null;
-      return !!s?.present && (s.present["email"] === true || s.present["address1"] === true || (s.cardFrames?.length ?? 0) > 0);
-    },
-    { timeoutMs: buy.stepTimeoutMs, intervalMs: 400, note: "체크아웃 화면" },
-  )) as StageReport | null;
+  const formShown = (s: StageReport | null): s is StageReport & { present: Record<string, boolean> } =>
+    !!s?.present && (s.present["email"] === true || s.present["address1"] === true || (s.cardFrames?.length ?? 0) > 0);
+  // 주문서가 뜨거나, **체크포인트(/checkpoint — hCaptcha)** 로 돌려지거나 둘 중 먼저 오는 것을 기다린다.
+  const waitForm = async (): Promise<StageReport | null> =>
+    (await waitFor(
+      host,
+      stageScript(),
+      (v) => formShown(v as StageReport | null) || isCheckpointUrl((v as StageReport | null)?.url),
+      { timeoutMs: buy.stepTimeoutMs, intervalMs: 400, note: "체크아웃 화면" },
+    )) as StageReport | null;
+  let firstStage = await waitForm();
 
-  if (!firstStage?.present) {
+  // 0-1) 장바구니 → 체크아웃 사이의 **체크포인트** — 사람이 캡차를 풀면 버튼은 대신 누른다.
+  if (isCheckpointUrl(firstStage?.url)) {
+    const passed = await passCheckpoint(host, { captcha: captchaOpts });
+    steps.push({ ok: passed.ok, step: "checkpoint", reason: passed.reason });
+    if (!passed.ok) {
+      if (buy.handoffOnFailure) await host.showToHuman("체크포인트(사람 확인)를 넘지 못했습니다");
+      return result(false, "handed-off", `체크포인트: ${passed.reason}`);
+    }
+    firstStage = await waitForm();
+  }
+
+  // 시간이 다 되면 waitFor 는 마지막 값을 준다 — present 가 있어도 칸이 하나도 없으면 주문서가 아니다.
+  if (!formShown(firstStage)) {
     await host.showToHuman("체크아웃 화면을 못 찾았습니다");
     return result(false, "failed", "체크아웃 화면을 못 찾았습니다 (테마/차단 확인 필요)");
   }

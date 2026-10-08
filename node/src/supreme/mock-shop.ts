@@ -8,6 +8,7 @@
  *   POST /cart/add.js · GET /cart.js 장바구니
  *   /checkout → /checkout/payment   2단계 체크아웃 (배송정보 → 카드)
  *   /hcaptcha-frame                  **cross-origin iframe + postMessage 토큰** 흐름 재현
+ *   /checkpoint?return_to=/checkout  (checkpoint 옵션) Shopify 체크포인트 — 캡차를 풀고 **버튼을 눌러야** 넘어간다
  *   /thank_you                       주문 완료
  *
  * hCaptcha 재현이 핵심이다: iframe 안에서 사람이 체크하면 postMessage 로 부모에 토큰이 가고,
@@ -137,6 +138,31 @@ function checkoutHtml(): string {
   );
 }
 
+/** Shopify 체크포인트 — 진짜처럼 캡차 + 버튼. 토큰 없이 누르면 같은 화면이 다시 나온다. */
+function checkpointHtml(returnTo: string, error = ""): string {
+  return html(
+    "Checkpoint - Supreme",
+    `<h2>Checkpoint</h2>
+<p>Please confirm you are human to continue to checkout.</p>
+<form id="checkpoint" method="post" action="/checkpoint">
+  <input type="hidden" name="return_to" value="${returnTo.replace(/"/g, "&quot;")}" />
+  <div id="cap">
+    <iframe src="/hcaptcha-frame" width="320" height="90" title="hCaptcha"></iframe>
+  </div>
+  <textarea name="h-captcha-response" style="display:none"></textarea>
+  <div class="err">${error}</div>
+  <button type="submit">Submit</button>
+</form>
+<script>
+  window.addEventListener("message", (e) => {
+    if (e.data && e.data.type === "hcaptcha-token") {
+      document.querySelector('textarea[name="h-captcha-response"]').value = e.data.token;
+    }
+  });
+</script>`,
+  );
+}
+
 function paymentHtml(): string {
   return html(
     "Payment - Supreme",
@@ -209,7 +235,7 @@ function json(res: ServerResponse, code: number, body: unknown): void {
 
 /** 모의 스토어를 띄운다. origin 을 돌려준다 (예: http://127.0.0.1:53123). */
 export async function startMockShop(
-  options: { blockedProductsJson?: boolean; blockedProductJson?: boolean } = {},
+  options: { blockedProductsJson?: boolean; blockedProductJson?: boolean; checkpoint?: boolean } = {},
 ): Promise<MockShop> {
   const hits: string[] = [];
   const cart: MockShop["cart"] = [];
@@ -325,6 +351,29 @@ export async function startMockShop(
 <script type="application/json" id="product-${handle}-json">${JSON.stringify(payload)}</script>`,
         ),
       );
+      return;
+    }
+    // 체크포인트 — 통과 쿠키가 없으면 /checkout 을 /checkpoint 로 돌린다 (진짜 Shopify 처럼).
+    if (path === "/checkpoint" && req.method === "POST") {
+      const form = new URLSearchParams(await readBody(req));
+      const back = form.get("return_to") || "/checkout";
+      if ((form.get("h-captcha-response") ?? "").length > 20) {
+        res.writeHead(302, { location: back, "set-cookie": "mock_checkpoint=ok; Path=/" });
+        res.end();
+      } else {
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        res.end(checkpointHtml(back, "캡차를 먼저 풀어 주세요"));
+      }
+      return;
+    }
+    if (path === "/checkpoint") {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(checkpointHtml(url.searchParams.get("return_to") || "/checkout"));
+      return;
+    }
+    if (path === "/checkout" && options.checkpoint && !/mock_checkpoint=ok/.test(req.headers.cookie ?? "")) {
+      res.writeHead(302, { location: "/checkpoint?return_to=%2Fcheckout" });
+      res.end();
       return;
     }
     if (path === "/checkout") {

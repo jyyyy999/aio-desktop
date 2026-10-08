@@ -10,7 +10,8 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { BASE, nextDropTime } from "./config.js";
-import { formatQueueLine, looksLikeQueue, parseQueue, queueScript } from "./queue.js";
+import { formatQueueLine, looksLikeQueue, parseQueue, queueScript, waitThroughQueue } from "./queue.js";
+import { isCheckpointUrl, passCheckpoint, submitCheckpointScript } from "./checkpoint.js";
 import { LINES, LINE_PATTERNS } from "./lines.js";
 import { buildSnapshot, decide, describeKeywords, describeOption, diff, isKeywordSpec, matchProduct, needsFullName, parseHandle, parseKeywordSpec, parseOptionSpec, pickVariant, sizeEquals, withFullName, type BuyRule, type MonitorRule } from "./match.js";
 import { agreementsScript, chooseCardMethodScript, clickContinueScript, fillScript, saveInfoScript, stageScript } from "./checkout-fill.js";
@@ -206,6 +207,9 @@ function pureTests(): void {
   ok("probeScript 가 토큰 칸을 본다", probeScript().includes("h-captcha-response"));
   ok("focusScript 가 hcaptcha 를 찾는다", focusScript("hide").includes("hcaptcha.com"));
   ok("다시 걸 때는 사람의 스크롤을 되돌리지 않는다(첫 번과 다르게 본다)", focusScript("hide", "x", true) !== focusScript("hide", "x", false));
+  ok("체크포인트 주소를 알아본다", isCheckpointUrl("https://shop.supreme.com/checkpoint?return_to=https%3A%2F%2Fshop.supreme.com%2Fcheckout"));
+  ok("체크아웃·상품 주소는 체크포인트가 아니다", !isCheckpointUrl("https://shop.supreme.com/checkout") && !isCheckpointUrl("https://shop.supreme.com/products/checkpoint-tee"));
+  ok("체크포인트는 토큰이 든 폼의 버튼을 누른다", submitCheckpointScript().includes("h-captcha-response") && submitCheckpointScript().includes("requestSubmit"));
   ok("unfocusScript 가 되돌린다", unfocusScript().includes("data-aio-hidden"));
 
   console.log("\n== 체크아웃 스크립트 ==");
@@ -343,6 +347,93 @@ async function browserTests(): Promise<void> {
   } finally {
     await browser?.quit();
     await mock.close();
+  }
+}
+
+/** 사람 흉내 — 캡차 창이 뜨면 그 창의 체크박스를 누른다 (진짜에서는 사람이 창에서 직접 누른다). */
+function fakeHuman(browser: SupremeBrowser): { stop(): Promise<void> } {
+  let solving = true;
+  const loop = (async () => {
+    while (solving) {
+      await new Promise((r) => setTimeout(r, 600));
+      try {
+        const cap = (await browser.frames()).find((f) => /hcaptcha/i.test(f.name));
+        if (cap) await cap.run("(() => { const cb = document.getElementById('cb'); if (cb && !cb.checked) cb.click(); return true; })()");
+      } catch {
+        // 창이 바뀌는 중일 수 있다 — 다음 바퀴에 다시 본다.
+      }
+    }
+  })();
+  return {
+    async stop() {
+      solving = false;
+      await loop;
+    },
+  };
+}
+
+/**
+ * Shopify 체크포인트 — 장바구니에서 체크아웃으로 넘어갈 때 `/checkpoint?return_to=…` 로 돌려 hCaptcha 를 끼운다.
+ * 사람이 캡차를 풀면 버튼은 대신 눌러 체크아웃으로 이어 가야 한다 (2026-10-08 실사이트가 이렇다).
+ */
+async function checkpointTests(): Promise<void> {
+  console.log("\n== 체크포인트 (장바구니 → /checkpoint → 체크아웃) ==");
+  const profile = join(BASE, "chrome-profile-selftest");
+  mkdirSync(profile, { recursive: true });
+  const shops = [await startMockShop({ checkpoint: true }), await startMockShop({ checkpoint: true })];
+  let browser: SupremeBrowser | null = null;
+  try {
+    // 1) 일반 구매 — runCheckout 이 체크포인트를 넘고 결제까지 간다.
+    const mock = shops[0]!;
+    browser = await SupremeBrowser.launch({
+      profileDir: profile, headless: true, offscreen: false,
+      captchaWidth: 0, captchaHeight: 0, origin: mock.origin, cookie: "",
+    });
+    const shop = new Shop((script) => browser!.run(script));
+    await browser.goto(`${mock.origin}/collections/all`);
+    const added = await addToCart(shop, "box-logo-tee", "50011", 1, browser);
+    ok("담기", added.ok, added.reason);
+    const human = fakeHuman(browser);
+    const result = await runCheckout(browser, shop, {
+      email: "buyer@example.com", firstName: "Gil", lastName: "Hong", company: "",
+      address1: "1-2-3 Teheran-ro", address2: "", city: "Seoul", state: "", zip: "06134",
+      country: "KR", phone: "01012345678",
+      card: { number: "4242424242424242", expiry: "12/30", cvv: "123", holder: "GIL HONG" },
+      billingSameAsShipping: true,
+    }, mock.origin, {
+      clickPay: true, fillPayment: true, threeDsHandoff: false, handoffOnFailure: false,
+      stepTimeoutMs: 30_000, captchaTimeoutMs: 30_000, shippingPrefer: "first", payDelayMs: 0,
+    });
+    await human.stop();
+    for (const step of result.steps) console.log(`     · ${step.ok ? "✔" : "✖"} ${step.step}: ${step.reason}`);
+    const cp = result.steps.find((s) => s.step === "checkpoint");
+    ok("체크포인트를 알아보고 사람에게 넘긴다", cp?.ok === true, cp ? cp.reason : "체크포인트 단계 없음");
+    ok("풀고 나면 버튼을 대신 눌러 제출한다", mock.hits.includes("POST /checkpoint"), [...new Set(mock.hits)].join(", "));
+    ok("체크포인트를 넘어 결제까지 갔다", result.ok === true && result.stage === "paid", `${result.stage} ${result.reason}`);
+    await browser.quit();
+    browser = null;
+
+    // 2) 드랍(큐) 길 — 체크포인트에서 주소를 다시 열지 않고(캡차가 날아간다) 사람에게 넘긴다.
+    const mock2 = shops[1]!;
+    browser = await SupremeBrowser.launch({
+      profileDir: profile, headless: true, offscreen: false,
+      captchaWidth: 0, captchaHeight: 0, origin: mock2.origin, cookie: "",
+    });
+    const b = browser;
+    await b.goto(`${mock2.origin}/checkout`);
+    ok("/checkout 이 체크포인트로 돌려진다", isCheckpointUrl(await b.url()), await b.url());
+    const human2 = fakeHuman(b);
+    const queued = await waitThroughQueue(b, {
+      url: `${mock2.origin}/checkout`, timeoutMs: 40_000, reloadEveryMs: 0,
+      onCheckpoint: async () => (await passCheckpoint(b, { captcha: { timeoutMs: 30_000 } })).ok,
+    });
+    await human2.stop();
+    ok("큐 길에서도 체크포인트를 넘어 주문창에 들어간다", queued.ok && queued.info?.formReady === true, queued.reason);
+    const reloads = mock2.hits.filter((h) => h === "GET /checkpoint").length;
+    ok("체크포인트에서 주소를 다시 열지 않는다(캡차가 날아가지 않게)", reloads <= 2, `GET /checkpoint ${reloads}번`);
+  } finally {
+    await browser?.quit();
+    for (const one of shops) await one.close();
   }
 }
 
@@ -489,6 +580,7 @@ async function main(): Promise<void> {
   if (process.argv.includes("--browser")) {
     await browserTests();
     await htmlFallbackTests();
+    await checkpointTests();
   } else console.log("\n(크롬 왕복 시험은 --browser 를 붙이면 돕니다)");
 
   console.log(`\n== 결과: ${passed}개 통과 · ${failures.length}개 실패 ==`);
