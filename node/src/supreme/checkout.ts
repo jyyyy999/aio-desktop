@@ -1,16 +1,16 @@
 /**
- * ?먮룞援щℓ ???λ컮援щ땲 ?닿린遺??**寃곗젣 踰꾪듉 ?대┃源뚯?**. ?щ엺?????쇱? 罹≪감? 3DS 肉먯씠??
+ * 자동구매 — 장바구니 담기부터 **결제 버튼 클릭까지**. 사람이 할 일은 캡차와 3DS 뿐이다.
  *
- * ?쒖꽌 (Shopify 泥댄겕?꾩썐)
- *   1. ?λ컮援щ땲 ?닿린 (POST /cart/add.js ????됲꽣 ?놁씠)
- *   2. /checkout ?쇰줈
- *   3. 諛곗넚 ?뺣낫 ?낅젰 (蹂몃Ц ?꾨젅??
- *   4. **罹≪감媛 ?덉쑝硫??щ엺?먭쾶 李쎌쓣 ?섍릿??* (?ш린??硫덉떠 湲곕떎由곕떎)
- *   5. 寃곗젣 ?④퀎濡???諛곗넚 諛⑸쾿 ??移대뱶 ?낅젰(card-fields-* iframe ??
- *   6. 罹≪감 ??踰????뺤씤 ??寃곗젣 踰꾪듉 ?대┃
- *   7. 二쇰Ц ?꾨즺 ?뺤씤. 3DS쨌異붽? ?몄쬆???⑤㈃ 李쎌쓣 ?섍린怨?湲곕떎由곕떎.
+ * 순서 (Shopify 체크아웃)
+ *   1. 장바구니 담기 (POST /cart/add.js — 셀렉터 없이)
+ *   2. /checkout 으로
+ *   3. 배송 정보 입력 (본문 프레임)
+ *   4. **캡차가 있으면 사람에게 창을 넘긴다** (여기서 멈춰 기다린다)
+ *   5. 결제 단계로 → 배송 방법 → 카드 입력(card-fields-* iframe 들)
+ *   6. 캡차 한 번 더 확인 → 결제 버튼 클릭
+ *   7. 주문 완료 확인. 3DS·추가 인증이 뜨면 창을 넘기고 기다린다.
  *
- * ?대뒓 ?④퀎????踰??ㅽ뙣?섎㈃ 李쎌쓣 ?щ엺?먭쾶 蹂댁뿬 二쇨퀬 硫덉텣????議곗슜???由?二쇰Ц???ｌ? ?딅뒗??
+ * 어느 단계든 한 번 실패하면 창을 사람에게 보여 주고 멈춘다 — 조용히 엉뚱한 주문을 넣지 않는다.
  */
 import { type CaptchaOptions, clearCaptchaIfAny, type CaptchaWindowHost } from "./captcha-window.js";
 import { log } from "./log.js";
@@ -29,21 +29,21 @@ import {
 } from "./checkout-fill.js";
 import type { Shop } from "./site.js";
 
-/** 泥댄겕?꾩썐???뚮━?????꾩슂??李승룻봽?덉엫 議곗옉. browser.ts 媛 援ы쁽?쒕떎. */
+/** 체크아웃을 돌리는 데 필요한 창·프레임 조작. browser.ts 가 구현한다. */
 export interface CheckoutHost extends CaptchaWindowHost {
-  /** 媛숈? ?꾨줈?꾨줈 ???섏씠吏濡?媛꾨떎 (泥댄겕?꾩썐? 蹂댁씠??李쎌뿉???쒕떎). */
+  /** 같은 프로필로 새 페이지로 간다 (체크아웃은 보이는 창에서 한다). */
   goto(url: string): Promise<void>;
-  /** 蹂몃Ц ?꾨젅?꾩뿉???ㅽ겕由쏀듃瑜??뚮┛??(CaptchaWindowHost.run 怨?媛숈? 寃?. */
+  /** 본문 프레임에서 스크립트를 돌린다 (CaptchaWindowHost.run 과 같은 것). */
   run(script: string): Promise<unknown>;
-  /** 吏湲??섏씠吏??iframe 紐⑸줉 ??name/title 怨?洹??덉뿉???ㅽ겕由쏀듃瑜??뚮━???⑥닔. */
+  /** 지금 페이지의 iframe 목록 — name/title 과 그 안에서 스크립트를 돌리는 함수. */
   frames(): Promise<{ name: string; run(script: string): Promise<unknown> }[]>;
-  /** ?꾩옱 二쇱냼. */
+  /** 현재 주소. */
   url(): Promise<string>;
-  /** 吏湲?蹂닿퀬 ?덈뒗 李쎌쓣 ?щ엺?먭쾶 蹂댁뿬 以??(?ㅽ뙣?덉쓣 ??. */
+  /** 지금 보고 있는 창을 사람에게 보여 준다 (실패했을 때). */
   showToHuman(note: string): Promise<void>;
-  /** 李쎌쓣 議곗슜???섎룎由곕떎. */
+  /** 창을 조용히 되돌린다. */
   background(): Promise<void>;
-  /** ?ㅽ뙣 ?붾㈃???뚯씪濡??④릿??(?놁쑝硫??섏뼱媛꾨떎). */
+  /** 실패 화면을 파일로 남긴다 (없으면 넘어간다). */
   screenshot(path: string): Promise<string>;
 }
 
@@ -61,34 +61,34 @@ export interface Profile {
   phone: string;
   card: { number: string; expiry: string; cvv: string; holder: string };
   billingSameAsShipping: boolean;
-  /* ?? ?덊봽由?二쇰Ц李?Global-e)?먮쭔 ?덈뒗 寃껊뱾. 鍮꾨㈃ 洹?移몄? 嫄대꼫?대떎 ?? */
-  /** YYYY-MM-DD ???쒓뎅 移대뱶 寃곗젣媛 ?붽뎄?쒕떎 */
+  /* ── 슈프림 주문창(Global-e)에만 있는 것들. 비면 그 칸은 건너뛴다 ── */
+  /** YYYY-MM-DD — 한국 카드 결제가 요구한다 */
   dateOfBirth?: string;
-  /** 移대뱶 PIN ??2?먮━ */
+  /** 카드 PIN 앞 2자리 */
   cardPinFirstTwo?: string;
-  /** 媛쒖씤?듦?怨좎쑀遺??(P + 12?먮━) ??二쇰Ц李쎌쓽 "additional information" */
+  /** 개인통관고유부호 (P + 12자리) — 주문창의 "additional information" */
   personalCustomsCode?: string;
   saveShippingInformation?: boolean;
-  /** ?숈쓽 泥댄겕諛뺤뒪 (湲곕낯: ?꾨? 耳좊떎) */
+  /** 동의 체크박스 (기본: 전부 켠다) */
   agree?: { age14?: boolean; globale_tos?: boolean; privacy?: boolean; third_party?: boolean; supreme_tos?: boolean };
 }
 
 export interface BuyOptions {
   quantity: number;
-  /** 移대뱶 ?뺣낫源뚯? 梨꾩슦怨?寃곗젣 踰꾪듉???꾨Ⅴ??*/
+  /** 카드 정보까지 채우고 결제 버튼을 누를지 */
   clickPay: boolean;
   fillPayment: boolean;
-  /** 寃곗젣 踰꾪듉???꾨Ⅴ湲????좉퉸 (?ㅼ닔 諛⑹?) */
+  /** 결제 버튼을 누르기 전 잠깐 (실수 방지) */
   payDelayMs: number;
-  /** 3DS쨌異붽? ?몄쬆???щ엺?먭쾶 ?섍만吏 */
+  /** 3DS·추가 인증을 사람에게 넘길지 */
   threeDsHandoff: boolean;
-  /** ?④퀎 ?섎굹瑜?湲곕떎由щ뒗 理쒕? ?쒓컙 */
+  /** 단계 하나를 기다리는 최대 시간 */
   stepTimeoutMs: number;
-  /** 罹≪감 ?湲??쒓컙 */
+  /** 캡차 대기 시간 */
   captchaTimeoutMs: number;
-  /** ?ㅽ뙣?섎㈃ 李쎌쓣 ?щ엺?먭쾶 蹂댁뿬 二쇨퀬 硫덉텧吏 */
+  /** 실패하면 창을 사람에게 보여 주고 멈출지 */
   handoffOnFailure: boolean;
-  /** 諛곗넚 諛⑸쾿 ?좏샇 */
+  /** 배송 방법 선호 */
   shippingPrefer: "first" | "cheapest";
 }
 
@@ -133,7 +133,7 @@ interface StageReport {
   errors?: string[];
 }
 
-/** 議곌굔?????뚭퉴吏 ?섏씠吏瑜??ㅼ뿬?ㅻ낯?? */
+/** 조건이 될 때까지 페이지를 들여다본다. */
 async function waitFor(
   host: CheckoutHost,
   script: string,
@@ -149,7 +149,7 @@ async function waitFor(
     if (ok(last)) return last;
     if (Date.now() - lastNote > 10_000) {
       lastNote = Date.now();
-      host.note(`${opts.note} 湲곕떎由щ뒗 以묅?${Math.round((Date.now() - started) / 1000)}珥?`);
+      host.note(`${opts.note} 기다리는 중… ${Math.round((Date.now() - started) / 1000)}초`);
     }
     await host.sleep(opts.intervalMs);
   }
@@ -181,7 +181,7 @@ function cardValues(card: Profile["card"]): Record<string, string> {
   return out;
 }
 
-/** ?λ컮援щ땲???대뒗??????됲꽣 ?놁씠 Shopify ?붾뱶?ъ씤?몃줈. */
+/** 장바구니에 담는다 — 셀렉터 없이 Shopify 엔드포인트로. */
 export async function addToCart(
   shop: Shop,
   handle: string,
@@ -192,27 +192,27 @@ export async function addToCart(
   const before = await shop.cart();
   const res = await shop.addToCart(variantId, quantity);
   if (!res.ok) {
-    // variant 媛 ?≪븯?????덈떎 (?쒕엻 以?variant ?ъ깮??. ?곹뭹???ㅼ떆 ?댁꽍????踰???
-    host.note(`?닿린 ?ㅽ뙣(HTTP ${res.status} ${res.raw}) ???곹뭹???ㅼ떆 ?댁꽍?⑸땲??`);
+    // variant 가 죽었을 수 있다 (드랍 중 variant 재생성). 상품을 다시 해석해 한 번 더.
+    host.note(`담기 실패(HTTP ${res.status} ${res.raw}) — 상품을 다시 해석합니다`);
     const product = await shop.resolve(handle);
     const retry = product?.variants.find((v) => v.available);
     if (retry && retry.id !== variantId) {
       const again = await shop.addToCart(retry.id, quantity);
-      if (again.ok) return { ok: true, step: "cart", reason: `?ы빐?앺븳 variant(${retry.title})濡??댁쓬` };
-      return { ok: false, step: "cart", reason: `?닿린 ?ㅽ뙣(HTTP ${again.status} ${again.raw})` };
+      if (again.ok) return { ok: true, step: "cart", reason: `재해석한 variant(${retry.title})로 담음` };
+      return { ok: false, step: "cart", reason: `담기 실패(HTTP ${again.status} ${again.raw})` };
     }
-    return { ok: false, step: "cart", reason: `?닿린 ?ㅽ뙣(HTTP ${res.status} ${res.raw})` };
+    return { ok: false, step: "cart", reason: `담기 실패(HTTP ${res.status} ${res.raw})` };
   }
   const after = await shop.cart();
   if (after.count <= before.count) {
-    return { ok: false, step: "cart", reason: `?닿릿 寃?媛숈? ?딆뒿?덈떎 (?λ컮援щ땲 ${before.count} ??${after.count})` };
+    return { ok: false, step: "cart", reason: `담긴 것 같지 않습니다 (장바구니 ${before.count} → ${after.count})` };
   }
-  return { ok: true, step: "cart", reason: `?λ컮援щ땲 ${before.count} ??${after.count} (${after.items.map((i) => `${i.title} x${i.quantity}`).join(", ")})` };
+  return { ok: true, step: "cart", reason: `장바구니 ${before.count} → ${after.count} (${after.items.map((i) => `${i.title} x${i.quantity}`).join(", ")})` };
 }
 
 /**
- * 泥댄겕?꾩썐 ???? 罹≪감쨌3DS 留??щ엺???섍퀬 ?섎㉧吏???먮룞.
- * @param onPaid 寃곗젣 ?꾨즺濡?蹂댁씪 ??(二쇰Ц踰덊샇? ?④퍡) ???뚮┝쨌?곹깭 ??μ? 遺瑜대뒗 履쎌씠 ?쒕떎.
+ * 체크아웃 한 판 — 캡차·3DS 만 사람이 하고 나머지는 자동.
+ * @param onPaid 결제 완료로 보일 때 (주문번호와 함께) — 알림·상태 저장은 부르는 쪽이 한다.
  */
 export async function runCheckout(
   host: CheckoutHost,
@@ -230,12 +230,12 @@ export async function runCheckout(
     return { ok, stage, reason, orderNo, steps, screenshot };
   };
 
-  // 0) 移댄듃 ?뺤씤 ??鍮꾩뼱 ?덉쑝硫?泥댄겕?꾩썐???ㅼ뼱媛??댁쑀媛 ?녿떎.
+  // 0) 카트 확인 — 비어 있으면 체크아웃에 들어갈 이유가 없다.
   const cart = await shop.cart();
-  if (cart.count <= 0) return result(false, "cart", "?λ컮援щ땲媛 鍮꾩뼱 ?덉뒿?덈떎");
+  if (cart.count <= 0) return result(false, "cart", "장바구니가 비어 있습니다");
 
-  // 1) 泥댄겕?꾩썐 ?섏씠吏
-  host.note(`泥댄겕?꾩썐?쇰줈 媛묐땲??(?λ컮援щ땲 ${cart.count}媛?`);
+  // 1) 체크아웃 페이지
+  host.note(`체크아웃으로 갑니다 (장바구니 ${cart.count}개)`);
   await host.goto(`${origin}/checkout`);
   const firstStage = (await waitFor(
     host,
@@ -244,18 +244,18 @@ export async function runCheckout(
       const s = v as StageReport | null;
       return !!s?.present && (s.present["email"] === true || s.present["address1"] === true || (s.cardFrames?.length ?? 0) > 0);
     },
-    { timeoutMs: buy.stepTimeoutMs, intervalMs: 400, note: "泥댄겕?꾩썐 ?붾㈃" },
+    { timeoutMs: buy.stepTimeoutMs, intervalMs: 400, note: "체크아웃 화면" },
   )) as StageReport | null;
 
   if (!firstStage?.present) {
-    await host.showToHuman("泥댄겕?꾩썐 ?붾㈃??紐?李얠븯?듬땲??");
-    return result(false, "failed", "泥댄겕?꾩썐 ?붾㈃??紐?李얠븯?듬땲??(?뚮쭏/李⑤떒 ?뺤씤 ?꾩슂)");
+    await host.showToHuman("체크아웃 화면을 못 찾았습니다");
+    return result(false, "failed", "체크아웃 화면을 못 찾았습니다 (테마/차단 확인 필요)");
   }
 
-  // ?대? 寃곗젣 ?④퀎濡??ㅼ뼱? ?덉쓣 ?섎룄 ?덈떎 (?λ컮援щ땲???닿릿 梨??댁뼱???섎뒗 寃쎌슦)
+  // 이미 결제 단계로 들어와 있을 수도 있다 (장바구니에 담긴 채 이어서 하는 경우)
   const needsShipping = firstStage.present["address1"] === true || firstStage.present["email"] === true;
 
-  // 2) 諛곗넚 ?뺣낫
+  // 2) 배송 정보
   if (needsShipping) {
     const filled = (await host.run(fillScript(shippingValues(profile), true))) as {
       filled?: Record<string, string>;
@@ -266,85 +266,85 @@ export async function runCheckout(
     const n = Object.keys(filled?.filled ?? {}).length;
     const missing = filled?.missing ?? [];
     if (filled?.empty) {
-      // 媛믪씠 ?섎굹???놁뿀??????됲꽣 臾몄젣媛 ?꾨땲???ㅼ젙 臾몄젣??
-      steps.push({ ok: false, step: "shipping", reason: "?ㅼ젙??諛곗넚 ?뺣낫媛 鍮꾩뼱 ?덉뒿?덈떎 (profile)" });
-      log.error("?ㅼ젙??諛곗넚 ?뺣낫媛 鍮꾩뼱 ?덉뒿?덈떎 ??二쇰Ц?쒕? 梨꾩슱 ???놁뒿?덈떎. ?댁? ?딄퀬 硫덉땅?덈떎.");
-      log.error("   ?⑥븮 ?ㅼ젙(aio/node/supreme_config.json)??profile ??梨꾩슫 ???ㅼ떆 ?꾩슦?몄슂.");
-      await host.showToHuman("諛곗넚 ?뺣낫媛 ?ㅼ젙???놁뒿?덈떎 ??梨꾩슫 ???ㅼ떆 ?ㅽ뻾??二쇱꽭??");
-      return result(false, "failed", "?ㅼ젙??諛곗넚 ?뺣낫媛 鍮꾩뼱 ?덉뒿?덈떎");
+      // 값이 하나도 없었다 — 셀렉터 문제가 아니라 설정 문제다.
+      steps.push({ ok: false, step: "shipping", reason: "설정의 배송 정보가 비어 있습니다 (profile)" });
+      log.error("설정의 배송 정보가 비어 있습니다 — 주문서를 채울 수 없습니다. 돌지 않고 멈춥니다.");
+      log.error("   → 설정(aio/node/supreme_config.json)의 profile 을 채운 뒤 다시 띄우세요.");
+      await host.showToHuman("배송 정보가 설정에 없습니다 — 채운 뒤 다시 실행해 주세요");
+      return result(false, "failed", "설정의 배송 정보가 비어 있습니다");
     }
     steps.push({
       ok: n > 0,
       step: "shipping",
-      reason: `${n}移??낅젰$${missing.length ? ` 쨌 紐?李얠쓬: ${missing.join(", ")}` : ""}${filled?.errors?.length ? ` 쨌 ?ㅻ쪟: ${filled.errors.join(" | ")}` : ""}`,
+      reason: `${n}칸 입력${missing.length ? ` · 못 찾음: ${missing.join(", ")}` : ""}${filled?.errors?.length ? ` · 오류: ${filled.errors.join(" | ")}` : ""}`,
     });
     if (n === 0) {
-      await host.showToHuman("諛곗넚 ?뺣낫 移몄쓣 紐?李얠븯?듬땲??");
-      return result(false, "failed", "諛곗넚 ?뺣낫 移몄쓣 紐?李얠븯?듬땲????DOM ?먭? ?꾩슂");
+      await host.showToHuman("배송 정보 칸을 못 찾았습니다");
+      return result(false, "failed", "배송 정보 칸을 못 찾았습니다 — DOM 점검 필요");
     }
-    host.note(`諛곗넚 ?뺣낫 ?낅젰: ${n}移?${missing.length ? ` (紐?李얠쓬 ${missing.join(", ")})` : ""}`);
+    host.note(`배송 정보 입력: ${n}칸${missing.length ? ` (못 찾음 ${missing.join(", ")})` : ""}`);
   }
 
-  // 3) 罹≪감 ??泥댄겕?꾩썐 ?쒖텧??留됯퀬 ?덉쑝硫??ш린???щ엺??遺瑜몃떎.
+  // 3) 캡차 — 체크아웃 제출을 막고 있으면 여기서 사람을 부른다.
   const cleared = await clearCaptchaIfAny(host, captchaOpts);
-  steps.push({ ok: cleared, step: "captcha", reason: cleared ? "罹≪감 ?듦낵" : "罹≪감瑜?紐???덉뒿?덈떎" });
+  steps.push({ ok: cleared, step: "captcha", reason: cleared ? "캡차 통과" : "캡차를 못 풀었습니다" });
   if (!cleared) {
-    if (buy.handoffOnFailure) await host.showToHuman("罹≪감瑜??吏 紐삵뻽?듬땲??");
-    return result(false, "handed-off", "罹≪감 誘명빐寃???李쎌쓣 ?щ엺?먭쾶 ?섍꼈?듬땲??");
+    if (buy.handoffOnFailure) await host.showToHuman("캡차를 풀지 못했습니다");
+    return result(false, "handed-off", "캡차 미해결 — 창을 사람에게 넘겼습니다");
   }
-  // 罹≪감瑜??몃뒗 ?숈븞 ?붾㈃???ㅼ떆 洹몃젮議뚯쓣 ???덈떎.
+  // 캡차를 푸는 동안 화면이 다시 그려졌을 수 있다.
   if (needsShipping) await host.run(fillScript(shippingValues(profile), true));
 
-  // 4) 寃곗젣 ?④퀎濡???**??泥댄겕?꾩썐? ???붾㈃?????덈떎.**
-  //    ?덊봽由?Global-e)? 二쇱냼쨌諛곗넚諛⑸쾿쨌移대뱶媛 媛숈? ?붾㈃???덈떎. 洹몃븣??"怨꾩냽" 踰꾪듉???꾩삁 ?녿떎
-  //    (2026-10-08: 諛곗넚?뺣낫 8移맞룹벙李④퉴吏 ???먮뒗??"怨꾩냽 踰꾪듉 ?놁쓬" ?쇰줈 硫덉톬??.
-  //    移대뱶移몄씠??諛곗넚諛⑸쾿???대? 蹂댁씠硫?怨꾩냽 踰꾪듉??李얠? ?딄퀬 洹몃?濡?移대뱶 ?④퀎濡?媛꾨떎.
+  // 4) 결제 단계로 — **이 체크아웃은 한 화면일 수 있다.**
+  //    슈프림(Global-e)은 주소·배송방법·카드가 같은 화면에 있다. 그때는 "계속" 버튼이 아예 없다
+  //    (2026-10-08: 배송정보 8칸·캡차까지 다 됐는데 "계속 버튼 없음" 으로 멈췄다).
+  //    카드칸이나 배송방법이 이미 보이면 계속 버튼을 찾지 않고 그대로 카드 단계로 간다.
   if (needsShipping) {
     const before = (await host.run(stageScript())) as StageReport | null;
     const onePage =
       (before?.cardFrames?.length ?? 0) > 0 || before?.present?.["cardNumber"] === true || (before?.shippingRates ?? 0) > 0;
     if (onePage) {
-      steps.push({ ok: true, step: "continue", reason: "???붾㈃ 泥댄겕?꾩썐 ??怨꾩냽 踰꾪듉 ?놁씠 吏꾪뻾" });
-      host.note("??泥댄겕?꾩썐? ???붾㈃?낅땲????怨꾩냽 踰꾪듉 ?놁씠 諛곗넚 諛⑸쾿쨌移대뱶濡??섏뼱媛묐땲??");
+      steps.push({ ok: true, step: "continue", reason: "한 화면 체크아웃 — 계속 버튼 없이 진행" });
+      host.note("이 체크아웃은 한 화면입니다 — 계속 버튼 없이 배송 방법·카드로 넘어갑니다");
     }
     const clicked = onePage
-      ? { ok: true, reason: "???붾㈃ 泥댄겕?꾩썐" }
+      ? { ok: true, reason: "한 화면 체크아웃" }
       : ((await host.run(clickContinueScript())) as { ok?: boolean; reason?: string } | null);
     if (!clicked?.ok) {
-      // **諛붾줈 硫덉텛吏 ?딅뒗??** 怨꾩냽 踰꾪듉???녾굅???좉꺼 ?덉쑝硫????붾㈃ 泥댄겕?꾩썐???꾩쭅 洹몃젮吏??以묒씪 ???덈떎
-      // (2026-10-08: 諛곗넚 8移맞룹벙李④퉴吏 ?먮뒗??"怨꾩냽 踰꾪듉 ?놁쓬" ?쇰줈 利됱떆 ?ㅽ뙣?덈떎).
-      // 諛곗넚 ?뺣낫瑜??ㅼ떆 梨꾩슦怨?媛믪씠 鍮꾩썙吏????덈떎) 寃곗젣 ?④퀎媛 ?⑤뒗吏 stepTimeoutMs ?숈븞 ?섑??댄빐 蹂몃떎.
+      // **바로 멈추지 않는다.** 계속 버튼이 없거나 잠겨 있으면 한 화면 체크아웃이 아직 그려지는 중일 수 있다
+      // (2026-10-08: 배송 8칸·캡차까지 됐는데 "계속 버튼 없음" 으로 즉시 실패했다).
+      // 배송 정보를 다시 채우고(값이 비워질 수 있다) 결제 단계가 뜨는지 stepTimeoutMs 동안 되풀이해 본다.
       let stageNow = (await host.run(stageScript())) as StageReport | null;
       const readyNow = (s: StageReport | null): boolean =>
         !!s && ((s.cardFrames?.length ?? 0) > 0 || s.present?.["cardNumber"] === true || (s.shippingRates ?? 0) > 0);
       const deadline = Date.now() + buy.stepTimeoutMs;
       let tries = 0;
       let lastNote = 0;
-      // **湲곕떎由щ뒗 ?숈븞 李쎌쓣 ?꾩슫??* ???щ엺???붾㈃??蹂닿퀬 吏곸젒 ?꾩?以????덇쾶 (2026-10-08 ?붿껌).
-      await host.showToHuman("寃곗젣 ?붾㈃??湲곕떎由щ뒗 以묒엯?덈떎 ???꾩슂?섎㈃ 李쎌뿉??吏곸젒 ?뚮윭 二쇱꽭??");
+      // **기다리는 동안 창을 띄운다** — 사람이 화면을 보고 직접 도와줄 수 있게 (2026-10-08 요청).
+      await host.showToHuman("결제 화면을 기다리는 중입니다 — 필요하면 창에서 직접 눌러 주세요");
       while (!readyNow(stageNow) && Date.now() < deadline && !host.cancelled()) {
         tries++;
         if ((stageNow?.continueLabel ?? "") !== "" && stageNow?.continueDisabled === false) {
           const again = (await host.run(clickContinueScript())) as { ok?: boolean; reason?: string } | null;
-          if (again?.ok) log.info(`怨꾩냽 踰꾪듉???뚮??듬땲??(${tries}踰덉㎏ ?쒕룄)`);
+          if (again?.ok) log.info(`계속 버튼을 눌렀습니다 (${tries}번째 시도)`);
         } else {
           await host.run(fillScript(shippingValues(profile), true));
         }
         if (Date.now() - lastNote > 5000) {
           lastNote = Date.now();
-          host.note(`寃곗젣 ?④퀎瑜?湲곕떎由щ뒗 以묅??⑥? ${Math.round((deadline - Date.now()) / 1000)}珥?(怨꾩냽 踰꾪듉???꾩쭅 ?놁뒿?덈떎 쨌 ${tries}踰덉㎏)`);
+          host.note(`결제 단계를 기다리는 중… 남은 ${Math.round((deadline - Date.now()) / 1000)}초 (계속 버튼이 아직 없습니다 · ${tries}번째)`);
         }
         await host.sleep(1500);
         stageNow = (await host.run(stageScript())) as StageReport | null;
       }
       if (!readyNow(stageNow)) {
         const errs = stageNow?.errors ?? [];
-        steps.push({ ok: false, step: "continue", reason: `怨꾩냽 踰꾪듉 紐??꾨쫫(?ъ떆??${tries}??: ${clicked?.reason ?? "?"} ${errs.join(" | ")}` });
-        if (buy.handoffOnFailure) await host.showToHuman("寃곗젣 ?④퀎濡??섏뼱媛吏 紐삵뻽?듬땲??");
-        return result(false, "shipping", `寃곗젣 ?④퀎濡?紐?媛붿뒿?덈떎: ${clicked?.reason ?? ""} ${errs.join(" | ")}`);
+        steps.push({ ok: false, step: "continue", reason: `계속 버튼 못 누름(재시도 ${tries}회): ${clicked?.reason ?? "?"} ${errs.join(" | ")}` });
+        if (buy.handoffOnFailure) await host.showToHuman("결제 단계로 넘어가지 못했습니다");
+        return result(false, "shipping", `결제 단계로 못 갔습니다: ${clicked?.reason ?? ""} ${errs.join(" | ")}`);
       }
-      steps.push({ ok: true, step: "continue", reason: `怨꾩냽 踰꾪듉 ?놁씠 寃곗젣 ?④퀎濡??ㅼ뼱媛붿뒿?덈떎 (?ъ떆??${tries}??` });
-      host.note("怨꾩냽 踰꾪듉 ?놁씠 寃곗젣 ?④퀎濡??ㅼ뼱媛붿뒿?덈떎 ??諛곗넚 諛⑸쾿쨌移대뱶濡??섏뼱媛묐땲??");
+      steps.push({ ok: true, step: "continue", reason: `계속 버튼 없이 결제 단계로 들어갔습니다 (재시도 ${tries}회)` });
+      host.note("계속 버튼 없이 결제 단계로 들어갔습니다 — 배송 방법·카드로 넘어갑니다");
     }
     const moved = (await waitFor(
       host,
@@ -354,30 +354,30 @@ export async function runCheckout(
         if (!s) return false;
         return (s.cardFrames?.length ?? 0) > 0 || s.present?.["cardNumber"] === true || (s.shippingRates ?? 0) > 0;
       },
-      { timeoutMs: buy.stepTimeoutMs, intervalMs: 500, note: "寃곗젣 ?붾㈃" },
+      { timeoutMs: buy.stepTimeoutMs, intervalMs: 500, note: "결제 화면" },
     )) as StageReport | null;
     if (!moved) {
-      await host.showToHuman("寃곗젣 ?붾㈃???⑥? ?딆븯?듬땲??");
-      return result(false, "failed", "寃곗젣 ?붾㈃???⑥? ?딆븯?듬땲??");
+      await host.showToHuman("결제 화면이 뜨지 않았습니다");
+      return result(false, "failed", "결제 화면이 뜨지 않았습니다");
     }
   }
 
-  // 5) 諛곗넚 諛⑸쾿
+  // 5) 배송 방법
   const rate = (await host.run(chooseShippingScript(buy.shippingPrefer))) as { ok?: boolean; text?: string; reason?: string } | null;
-  steps.push({ ok: rate?.ok !== false, step: "shipping-method", reason: rate?.ok ? `諛곗넚 諛⑸쾿: ${rate.text ?? ""}` : `諛곗넚 諛⑸쾿 ?먮룞 ?좏깮 ????${rate?.reason ?? "?"})` });
+  steps.push({ ok: rate?.ok !== false, step: "shipping-method", reason: rate?.ok ? `배송 방법: ${rate.text ?? ""}` : `배송 방법 자동 선택 안 됨 (${rate?.reason ?? "?"})` });
 
-  // 6) 罹≪감 ??踰???(寃곗젣 吏곸쟾???⑤뒗 寃쎌슦)
+  // 6) 캡차 한 번 더 (결제 직전에 뜨는 경우)
   const cleared2 = await clearCaptchaIfAny(host, captchaOpts);
   if (!cleared2) {
-    if (buy.handoffOnFailure) await host.showToHuman("寃곗젣 吏곸쟾 罹≪감瑜??吏 紐삵뻽?듬땲??");
-    return result(false, "handed-off", "寃곗젣 吏곸쟾 罹≪감 誘명빐寃?");
+    if (buy.handoffOnFailure) await host.showToHuman("결제 직전 캡차를 풀지 못했습니다");
+    return result(false, "handed-off", "결제 직전 캡차 미해결");
   }
 
-  // 7) 移대뱶
+  // 7) 카드
   if (buy.fillPayment) {
-    // ?덊봽由?Global-e)? 移대뱶 ?쇰뵒?ㅻ? 怨좊Ⅴ怨? ?숈쓽 泥댄겕諛뺤뒪瑜?耳쒖빞 寃곗젣 踰꾪듉???뚮┛??
+    // 슈프림(Global-e)은 카드 라디오를 고르고, 동의 체크박스를 켜야 결제 버튼이 풀린다.
     const method = (await host.run(chooseCardMethodScript())) as { ok?: boolean; id?: string; reason?: string } | null;
-    if (method && method.ok === false) steps.push({ ok: false, step: "payment-method", reason: `移대뱶 ?좏깮 ?ㅽ뙣 (${method.reason ?? method.id ?? "?"})` });
+    if (method && method.ok === false) steps.push({ ok: false, step: "payment-method", reason: `카드 선택 실패 (${method.reason ?? method.id ?? "?"})` });
     const agreements = (await host.run(
       agreementsScript({
         age14: profile.agree?.age14 !== false,
@@ -391,21 +391,21 @@ export async function runCheckout(
     steps.push({
       ok: agreeMissing.length === 0,
       step: "agree",
-      reason: `?숈쓽 ${agreements?.checked?.length ?? 0}移?泥댄겕${agreeMissing.length ? ` 쨌 紐?耳? ${agreeMissing.join(", ")}` : ""}`,
+      reason: `동의 ${agreements?.checked?.length ?? 0}칸 체크${agreeMissing.length ? ` · 못 켬: ${agreeMissing.join(", ")}` : ""}`,
     });
-    if (agreeMissing.length) log.warn(`?숈쓽 移몄쓣 ??耳쒖? 紐삵뻽?듬땲?? ${agreeMissing.join(", ")} ???щ엺???뺤씤?댁빞 ?????덉뒿?덈떎`);
+    if (agreeMissing.length) log.warn(`동의 칸을 다 켜지 못했습니다: ${agreeMissing.join(", ")} — 사람이 확인해야 할 수 있습니다`);
     await host.run(saveInfoScript(profile.saveShippingInformation === true));
 
     const values = cardValues(profile.card);
 
-    // ?앸뀈?붿씪쨌移대뱶 PIN ??2?먮━??iframe **諛?* 蹂몃Ц???덈떎 (?덊봽由?Global-e ?쒓뎅 移대뱶 寃곗젣).
+    // 생년월일·카드 PIN 앞 2자리는 iframe **밖** 본문에 있다 (슈프림 Global-e 한국 카드 결제).
     const extra: Record<string, string> = {};
     if (profile.dateOfBirth) extra["dateOfBirth"] = profile.dateOfBirth;
     if (profile.cardPinFirstTwo) extra["cardPinFirstTwo"] = profile.cardPinFirstTwo;
     if (profile.personalCustomsCode) {
-      // id 瑜?紐⑤Ⅴ??移몄씠??**湲(?쇰꺼)濡쒕룄** 李얠븘蹂몃떎 ??"additional information" ?덉쓽 ?듦?遺??
+      // id 를 모르는 칸이라 **글(라벨)로도** 찾아본다 — "additional information" 안의 통관부호.
       extra["personalCustomsCode"] = profile.personalCustomsCode;
-      extra["label:customs|clearance|?듦?|personal\\s*code"] = profile.personalCustomsCode;
+      extra["label:customs|clearance|통관|personal\\s*code"] = profile.personalCustomsCode;
     }
     if (Object.keys(extra).length) {
       const r = (await host.run(fillScript(extra, true))) as { filled?: Record<string, string>; missing?: string[] } | null;
@@ -413,15 +413,15 @@ export async function runCheckout(
       steps.push({
         ok: got.length > 0,
         step: "payment-extra",
-        reason: got.length ? `異붽? 移? ${got.join(", ")}` : `異붽? 移몄쓣 紐?李얠쓬: ${(r?.missing ?? []).join(", ")}`,
+        reason: got.length ? `추가 칸: ${got.join(", ")}` : `추가 칸을 못 찾음: ${(r?.missing ?? []).join(", ")}`,
       });
-      if (!got.length) log.warn("?앸뀈?붿씪쨌移대뱶 PIN 移몄쓣 紐?李얠븯?듬땲??????李쎌뿉??吏곸젒 梨꾩썙 二쇱꽭??");
+      if (!got.length) log.warn("생년월일·카드 PIN 칸을 못 찾았습니다 — 창에서 직접 채워 주세요");
     }
     if (Object.keys(values).length === 0) {
-      steps.push({ ok: false, step: "payment", reason: "移대뱶 ?뺣낫媛 ?ㅼ젙???놁뒿?덈떎" });
+      steps.push({ ok: false, step: "payment", reason: "카드 정보가 설정에 없습니다" });
       if (buy.clickPay) {
-        await host.showToHuman("移대뱶 ?뺣낫媛 ?놁뼱 寃곗젣瑜??꾨Ⅴ吏 ?딆븯?듬땲??");
-        return result(false, "payment", "移대뱶 ?뺣낫 ?놁쓬");
+        await host.showToHuman("카드 정보가 없어 결제를 누르지 않았습니다");
+        return result(false, "payment", "카드 정보 없음");
       }
     } else {
       const frames = await host.frames();
@@ -438,102 +438,102 @@ export async function runCheckout(
         }
       }
       if (filledAny === 0) {
-        // 移대뱶 ?낅젰??iframe ???꾨땶 ?뚮쭏???덈떎 ??蹂몃Ц?먯꽌 ??踰???
+        // 카드 입력이 iframe 이 아닌 테마도 있다 — 본문에서 한 번 더.
         const report = (await host.run(fillScript(values, true))) as { filled?: Record<string, string> } | null;
         filledAny = Object.keys(report?.filled ?? {}).length;
-        notes.push(`蹂몃Ц: ${Object.keys(report?.filled ?? {}).join(",")}`);
+        notes.push(`본문: ${Object.keys(report?.filled ?? {}).join(",")}`);
       }
-      steps.push({ ok: filledAny > 0, step: "payment", reason: filledAny > 0 ? `移대뱶 ${filledAny}移??낅젰 (${notes.join(" / ")})` : "移대뱶 移몄쓣 紐?李얠븯?듬땲??" });
+      steps.push({ ok: filledAny > 0, step: "payment", reason: filledAny > 0 ? `카드 ${filledAny}칸 입력 (${notes.join(" / ")})` : "카드 칸을 못 찾았습니다" });
       if (filledAny === 0) {
-        if (buy.handoffOnFailure) await host.showToHuman("移대뱶 ?낅젰 移몄쓣 紐?李얠븯?듬땲??");
-        return result(false, "payment", "移대뱶 ?낅젰 移몄쓣 紐?李얠븯?듬땲????DOM ?먭? ?꾩슂");
+        if (buy.handoffOnFailure) await host.showToHuman("카드 입력 칸을 못 찾았습니다");
+        return result(false, "payment", "카드 입력 칸을 못 찾았습니다 — DOM 점검 필요");
       }
-      host.note(`移대뱶 ?뺣낫 ?낅젰 ?꾨즺 (${notes.join(" / ")})`);
+      host.note(`카드 정보 입력 완료 (${notes.join(" / ")})`);
     }
   }
 
-  // 8) 泥?뎄吏 = 諛곗넚吏
+  // 8) 청구지 = 배송지
   await host.run(billingSameScript());
 
-  // 9) 寃곗젣 踰꾪듉
+  // 9) 결제 버튼
   if (!buy.clickPay) {
-    await host.showToHuman("寃곗젣 踰꾪듉? 吏곸젒 ?뚮윭 二쇱꽭??");
-    return result(true, "payment", "寃곗젣 吏곸쟾?먯꽌 硫덉톬?듬땲??(?섎룞 寃곗젣)");
+    await host.showToHuman("결제 버튼은 직접 눌러 주세요");
+    return result(true, "payment", "결제 직전에서 멈췄습니다 (수동 결제)");
   }
   if (buy.payDelayMs > 0) await host.sleep(buy.payDelayMs);
 
   const paid = (await host.run(clickPayScript())) as { ok?: boolean; reason?: string } | null;
-  steps.push({ ok: !!paid?.ok, step: "pay-click", reason: paid?.ok ? "寃곗젣 踰꾪듉 ?대┃" : `寃곗젣 踰꾪듉 紐??꾨쫫: ${paid?.reason ?? "?"}` });
+  steps.push({ ok: !!paid?.ok, step: "pay-click", reason: paid?.ok ? "결제 버튼 클릭" : `결제 버튼 못 누름: ${paid?.reason ?? "?"}` });
   if (!paid?.ok) {
-    if (buy.handoffOnFailure) await host.showToHuman(`寃곗젣 踰꾪듉???꾨Ⅴ吏 紐삵뻽?듬땲?? ${paid?.reason ?? ""}`);
-    return result(false, "payment", `寃곗젣 踰꾪듉 紐??꾨쫫: ${paid?.reason ?? ""}`);
+    if (buy.handoffOnFailure) await host.showToHuman(`결제 버튼을 누르지 못했습니다: ${paid?.reason ?? ""}`);
+    return result(false, "payment", `결제 버튼 못 누름: ${paid?.reason ?? ""}`);
   }
-  host.note("寃곗젣 踰꾪듉???뚮??듬땲????寃곌낵瑜?湲곕떎由쎈땲??");
+  host.note("결제 버튼을 눌렀습니다 — 결과를 기다립니다");
 
-  // 10) 寃곌낵: 二쇰Ц ?꾨즺 / 3DS / ?ㅽ뙣
+  // 10) 결과: 주문 완료 / 3DS / 실패
   const started = Date.now();
   while (Date.now() - started < buy.stepTimeoutMs) {
     await host.sleep(700);
-    if (host.cancelled()) return result(false, "failed", "?щ엺??硫덉톬?듬땲??");
+    if (host.cancelled()) return result(false, "failed", "사람이 멈췄습니다");
 
     const done = (await host.run(orderDoneScript())) as { thanks?: boolean; orderNo?: string; url?: string } | null;
     if (done?.thanks) {
-      const orderNo = str(done.orderNo) || "(二쇰Ц踰덊샇 紐??쎌쓬)";
-      host.note(`寃곗젣 ?꾨즺 ??二쇰Ц ${orderNo}`);
-      steps.push({ ok: true, step: "paid", reason: `二쇰Ц ?꾨즺 ${orderNo}` });
+      const orderNo = str(done.orderNo) || "(주문번호 못 읽음)";
+      host.note(`결제 완료 — 주문 ${orderNo}`);
+      steps.push({ ok: true, step: "paid", reason: `주문 완료 ${orderNo}` });
       await onPaid?.(orderNo);
       await host.background();
-      return result(true, "paid", `二쇰Ц ?꾨즺 ${orderNo}`, orderNo);
+      return result(true, "paid", `주문 완료 ${orderNo}`, orderNo);
     }
 
     const three = (await host.run(threeDsScript())) as { challenge?: boolean; text?: string } | null;
     if (three?.challenge) {
-      host.note(`異붽? ?몄쬆(3DS)???꾩슂?⑸땲?? ${str(three.text).slice(0, 120)}`);
+      host.note(`추가 인증(3DS)이 필요합니다: ${str(three.text).slice(0, 120)}`);
       if (buy.threeDsHandoff) {
-        await host.showToHuman("移대뱶??異붽? ?몄쬆(3DS)???꾨즺??二쇱꽭??");
+        await host.showToHuman("카드사 추가 인증(3DS)을 완료해 주세요");
         const ok = await waitFor(host, orderDoneScript(), (v) => !!(v as { thanks?: boolean } | null)?.thanks, {
           timeoutMs: buy.captchaTimeoutMs,
           intervalMs: 1000,
-          note: "異붽? ?몄쬆",
+          note: "추가 인증",
         });
         const finished = ok as { thanks?: boolean; orderNo?: string } | null;
         if (finished?.thanks) {
-          const orderNo = str(finished.orderNo) || "(二쇰Ц踰덊샇 紐??쎌쓬)";
-          steps.push({ ok: true, step: "paid", reason: `3DS ?꾨즺 쨌 二쇰Ц ${orderNo}` });
+          const orderNo = str(finished.orderNo) || "(주문번호 못 읽음)";
+          steps.push({ ok: true, step: "paid", reason: `3DS 완료 · 주문 ${orderNo}` });
           await onPaid?.(orderNo);
           await host.background();
-          return result(true, "paid", `3DS ?꾨즺 쨌 二쇰Ц ${orderNo}`, orderNo);
+          return result(true, "paid", `3DS 완료 · 주문 ${orderNo}`, orderNo);
         }
-        return result(false, "handed-off", "異붽? ?몄쬆???앸굹吏 ?딆븯?듬땲????李쎌뿉??吏곸젒 ?뺤씤??二쇱꽭??");
+        return result(false, "handed-off", "추가 인증이 끝나지 않았습니다 — 창에서 직접 확인해 주세요");
       }
-      return result(false, "payment", "異붽? ?몄쬆(3DS)???꾩슂?⑸땲??");
+      return result(false, "payment", "추가 인증(3DS)이 필요합니다");
     }
 
     const stage = (await host.run(stageScript())) as StageReport | null;
     if (stage?.errors?.length) {
       const text = stage.errors.join(" | ");
       steps.push({ ok: false, step: "payment-error", reason: text });
-      host.note(`寃곗젣 ?붾㈃ ?ㅻ쪟: ${text}`);
-      // 移대뱶 ?ㅻ쪟???щ엺??怨좎튌 ???덇쾶 李쎌쓣 ?섍릿??
-      if (buy.handoffOnFailure) await host.showToHuman(`寃곗젣 ?ㅻ쪟: ${text}`);
-      return result(false, "payment", `寃곗젣 ?ㅻ쪟: ${text}`);
+      host.note(`결제 화면 오류: ${text}`);
+      // 카드 오류는 사람이 고칠 수 있게 창을 넘긴다.
+      if (buy.handoffOnFailure) await host.showToHuman(`결제 오류: ${text}`);
+      return result(false, "payment", `결제 오류: ${text}`);
     }
   }
 
-  if (buy.handoffOnFailure) await host.showToHuman("寃곗젣 寃곌낵瑜??뺤씤?섏? 紐삵뻽?듬땲??");
-  return result(false, "failed", "寃곗젣 寃곌낵瑜??뺤씤?섏? 紐삵뻽?듬땲????李쎌뿉??吏곸젒 ?뺤씤??二쇱꽭??");
+  if (buy.handoffOnFailure) await host.showToHuman("결제 결과를 확인하지 못했습니다");
+  return result(false, "failed", "결제 결과를 확인하지 못했습니다 — 창에서 직접 확인해 주세요");
 }
 
 /**
- * 罹≪감媛 ???덉쑝硫?**罹≪감留?蹂댁씠??李?*???꾩썙 ?щ엺???寃??쒕떎 (援щℓ? 臾닿??섍쾶 ?????덇쾶 ?곕줈 ??.
- * ?ㅼ젙 ?붾㈃??"罹≪감 李??쒗뿕" ?먮룄 ?대떎.
+ * 캡차가 떠 있으면 **캡차만 보이는 창**을 띄워 사람이 풀게 한다 (구매와 무관하게 쓸 수 있게 따로 둠).
+ * 설정 화면의 "캡차 창 시험" 도 이것.
  */
 export async function openCaptchaForHuman(host: CheckoutHost, timeoutMs = 300_000): Promise<boolean> {
   const probe = await host.run(
     `(() => { const f = [...document.querySelectorAll("iframe")].filter(el => /hcaptcha|turnstile|captcha|cloudflare/i.test((el.getAttribute("src")||"")+(el.getAttribute("title")||""))); return f.length > 0; })()`,
   );
   if (!probe) {
-    host.note("???붾㈃?먮뒗 罹≪감媛 ?놁뒿?덈떎");
+    host.note("이 화면에는 캡차가 없습니다");
     return false;
   }
   return clearCaptchaIfAny(host, { timeoutMs, silent: false });
