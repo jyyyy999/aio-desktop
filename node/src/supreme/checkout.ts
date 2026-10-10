@@ -12,7 +12,7 @@
  *
  * 어느 단계든 한 번 실패하면 창을 사람에게 보여 주고 멈춘다 — 조용히 엉뚱한 주문을 넣지 않는다.
  */
-import { type CaptchaOptions, clearCaptchaIfAny, type CaptchaWindowHost } from "./captcha-window.js";
+import { type CaptchaOptions, clearCaptchaIfAny, type CaptchaWindowHost, probeCaptcha } from "./captcha-window.js";
 import { isCheckpointUrl, passCheckpoint } from "./checkpoint.js";
 import { log } from "./log.js";
 import {
@@ -91,6 +91,8 @@ export interface BuyOptions {
   handoffOnFailure: boolean;
   /** 배송 방법 선호 */
   shippingPrefer: "first" | "cheapest";
+  /** 방금 담기에 성공했다 — 체크아웃 전에 장바구니를 다시 묻지 않는다 (요청 하나 아끼기) */
+  cartKnown?: boolean;
 }
 
 export const DEFAULT_BUY_OPTIONS: BuyOptions = {
@@ -190,7 +192,7 @@ export async function addToCart(
   quantity: number,
   host: Pick<CheckoutHost, "note">,
 ): Promise<StepResult> {
-  const before = await shop.cart();
+  // **장바구니를 앞뒤로 묻지 않는다** — add.js 가 200 이면 담긴 것이다 (요청 둘을 아껴 빠르게 담는다, 2026-10-10).
   const res = await shop.addToCart(variantId, quantity);
   if (!res.ok) {
     // variant 가 죽었을 수 있다 (드랍 중 variant 재생성). 상품을 다시 해석해 한 번 더.
@@ -204,11 +206,7 @@ export async function addToCart(
     }
     return { ok: false, step: "cart", reason: `담기 실패(HTTP ${res.status} ${res.raw})` };
   }
-  const after = await shop.cart();
-  if (after.count <= before.count) {
-    return { ok: false, step: "cart", reason: `담긴 것 같지 않습니다 (장바구니 ${before.count} → ${after.count})` };
-  }
-  return { ok: true, step: "cart", reason: `장바구니 ${before.count} → ${after.count} (${after.items.map((i) => `${i.title} x${i.quantity}`).join(", ")})` };
+  return { ok: true, step: "cart", reason: `담았습니다 (variant ${variantId} ×${quantity})` };
 }
 
 /**
@@ -232,11 +230,13 @@ export async function runCheckout(
   };
 
   // 0) 카트 확인 — 비어 있으면 체크아웃에 들어갈 이유가 없다.
-  const cart = await shop.cart();
-  if (cart.count <= 0) return result(false, "cart", "장바구니가 비어 있습니다");
+  if (!buy.cartKnown) {
+    const cart = await shop.cart();
+    if (cart.count <= 0) return result(false, "cart", "장바구니가 비어 있습니다");
+  }
 
   // 1) 체크아웃 페이지
-  host.note(`체크아웃으로 갑니다 (장바구니 ${cart.count}개)`);
+  host.note("체크아웃으로 갑니다");
   await host.goto(`${origin}/checkout`);
   const formShown = (s: StageReport | null): s is StageReport & { present: Record<string, boolean> } =>
     !!s?.present && (s.present["email"] === true || s.present["address1"] === true || (s.cardFrames?.length ?? 0) > 0);
@@ -246,7 +246,7 @@ export async function runCheckout(
       host,
       stageScript(),
       (v) => formShown(v as StageReport | null) || isCheckpointUrl((v as StageReport | null)?.url),
-      { timeoutMs: buy.stepTimeoutMs, intervalMs: 400, note: "체크아웃 화면" },
+      { timeoutMs: buy.stepTimeoutMs, intervalMs: 150, note: "체크아웃 화면" },
     )) as StageReport | null;
   let firstStage = await waitForm();
 
@@ -301,14 +301,15 @@ export async function runCheckout(
   }
 
   // 3) 캡차 — 체크아웃 제출을 막고 있으면 여기서 사람을 부른다.
+  const captchaShown = await probeCaptcha(host);
   const cleared = await clearCaptchaIfAny(host, captchaOpts);
   steps.push({ ok: cleared, step: "captcha", reason: cleared ? "캡차 통과" : "캡차를 못 풀었습니다" });
   if (!cleared) {
     if (buy.handoffOnFailure) await host.showToHuman("캡차를 풀지 못했습니다");
     return result(false, "handed-off", "캡차 미해결 — 창을 사람에게 넘겼습니다");
   }
-  // 캡차를 푸는 동안 화면이 다시 그려졌을 수 있다.
-  if (needsShipping) await host.run(fillScript(shippingValues(profile), true));
+  // 캡차를 푸는 동안 화면이 다시 그려졌을 수 있다 (캡차 창은 같은 주소를 새 창으로 연다). 캡차가 없었으면 그대로다.
+  if (needsShipping && captchaShown?.present && !captchaShown.solved) await host.run(fillScript(shippingValues(profile), true));
 
   // 4) 결제 단계로 — **이 체크아웃은 한 화면일 수 있다.**
   //    슈프림(Global-e)은 주소·배송방법·카드가 같은 화면에 있다. 그때는 "계속" 버튼이 아예 없다
@@ -369,7 +370,7 @@ export async function runCheckout(
         if (!s) return false;
         return (s.cardFrames?.length ?? 0) > 0 || s.present?.["cardNumber"] === true || (s.shippingRates ?? 0) > 0;
       },
-      { timeoutMs: buy.stepTimeoutMs, intervalMs: 500, note: "결제 화면" },
+      { timeoutMs: buy.stepTimeoutMs, intervalMs: 200, note: "결제 화면" },
     )) as StageReport | null;
     if (!moved) {
       await host.showToHuman("결제 화면이 뜨지 않았습니다");
@@ -488,7 +489,7 @@ export async function runCheckout(
   // 10) 결과: 주문 완료 / 3DS / 실패
   const started = Date.now();
   while (Date.now() - started < buy.stepTimeoutMs) {
-    await host.sleep(700);
+    await host.sleep(300);
     if (host.cancelled()) return result(false, "failed", "사람이 멈췄습니다");
 
     const done = (await host.run(orderDoneScript())) as { thanks?: boolean; orderNo?: string; url?: string } | null;

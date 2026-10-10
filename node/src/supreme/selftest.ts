@@ -584,6 +584,14 @@ async function htmlFallbackTests(): Promise<void> {
     ok("사이즈를 뽑아낸다", byPage?.variants.map((v) => v.size).join(",") === "Medium,Large,Large", byPage?.variants.map((v) => v.size).join(","));
     ok("가격은 화면 단위", byPage?.priceMin === 48, `${byPage?.priceMin}`);
 
+    // 막힌 길(403)은 한 번만 묻는다 — 매 바퀴·매 상품마다 요청을 버리지 않게 (빠르게 사려고).
+    await shop.list("all");
+    await shop.resolve("box-logo-tee");
+    const jsonAsks = mock.hits.filter((h) => h === "GET /collections/all/products.json").length;
+    const jsAsks = mock.hits.filter((h) => h === "GET /products/box-logo-tee.js").length;
+    ok("막힌 products.json 은 다시 묻지 않는다", jsonAsks === 1, `${jsonAsks}번`);
+    ok("막힌 /products/<handle>.js 는 다시 묻지 않는다", jsAsks === 1, `${jsAsks}번`);
+
     // 감시 한 바퀴 — 발견 줄이 나와야 한다 (첫 바퀴부터 알리게 silentFirstScan 을 끈다).
     const lines: string[] = [];
     const capture = {

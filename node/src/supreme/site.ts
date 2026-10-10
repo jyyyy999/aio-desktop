@@ -268,7 +268,8 @@ export function listHtmlScript(collection: string): string {
   };
   // 목록은 **한 번에 다 그려지지 않는다.** 그리드가 여러 개이고 스크롤하면 더 불러온다.
   //   실측(2026-10-08): 첫 화면만 긁으면 36개, 끝까지 모으면 209개 — 그래서 +leather 상품을 못 봤다.
-  // 스크롤해 가며 **개수가 멈출 때까지** 모은다 (1.5초 동안 안 늘면 끝).
+  // 스크롤해 가며 **개수가 멈출 때까지** 모은다 (0.6초 동안 안 늘면 끝 — 빠르게 사려고 2026-10-10 에 줄였다.
+  // 이름이 반쪽으로 온 카드는 감시의 색 보완이 상품 페이지 이름으로 메운다).
   // **여러 번 훑어 합친다.** 이미지·색이 늦게 붙는 카드가 있어서, 한 번만 긁으면
   // "Leather Appliqué Hooded Work Jacket"(색 없음) 처럼 이름이 반쪽으로 온다 (2026-10-08 실측).
   // 같은 handle 은 **더 긴 이름·더 많은 글**을 남기고, 품절은 한 번이라도 아니면 아니라고 본다.
@@ -296,7 +297,7 @@ export function listHtmlScript(collection: string): string {
   while (Date.now() < deadline) {
     try {
       const height = document.body.scrollHeight;
-      const step = Math.max(200, Math.round(window.innerHeight * 0.7));
+      const step = Math.max(400, Math.round(window.innerHeight * 1.5));
       if (scrollY >= height - step) {
         wrapped = true;
         scrollY = 0;
@@ -307,13 +308,13 @@ export function listHtmlScript(collection: string): string {
     } catch (e) {
       wrapped = true; // 스크롤을 못 하면 한 바퀴 돈 것으로 보고 멈춘다
     }
-    await new Promise((r) => setTimeout(r, 350));
+    await new Promise((r) => setTimeout(r, 200));
     cards = merge(collect());
     const now = sumLen(cards);
     if (now !== best) {
       best = now;
       stableSince = Date.now();
-    } else if (cards.length > 0 && wrapped && Date.now() - stableSince > 1500) {
+    } else if (cards.length > 0 && wrapped && Date.now() - stableSince > 600) {
       break;
     }
   }
@@ -465,6 +466,12 @@ export interface DriverLike {
 export class Shop {
   /** 마지막 resolve 가 어느 길로 갔나 (로그·점검용) */
   lastResolveNote = "";
+  /**
+   * 한 번 막힌(401·403) 길은 다시 묻지 않는다 — 슈프림은 products.json · /products/<handle>.js 가 늘 403 이라
+   * 매 바퀴·매 상품마다 요청 하나씩을 버렸다 (빠르게 사려고 2026-10-10).
+   */
+  private listJsonBlocked = false;
+  private productJsBlocked = false;
 
   /**
    * @param run 페이지에서 스크립트를 돌린다
@@ -485,13 +492,16 @@ export class Shop {
         /* 못 가면 지금 페이지로 해 본다 */
       }
     }
-    const json = (await this.run(listScript(collection))) as {
-      mode?: string;
-      status?: number;
-      products?: RawProduct[];
-      hero?: string;
-      note?: string;
-    } | null;
+    const json = this.listJsonBlocked
+      ? null
+      : ((await this.run(listScript(collection))) as {
+          mode?: string;
+          status?: number;
+          products?: RawProduct[];
+          hero?: string;
+          note?: string;
+        } | null);
+    if (json && [401, 403].includes(num(json.status))) this.listJsonBlocked = true;
     if (json && Array.isArray(json.products) && json.products.length > 0) {
       return {
         mode: "json",
@@ -501,7 +511,7 @@ export class Shop {
         note: str(json.note),
       };
     }
-    const note = json ? `products.json ${num(json.status)} ${str(json.note)}` : "products.json 응답 없음";
+    const note = json ? `products.json ${num(json.status)} ${str(json.note)}` : this.listJsonBlocked ? "products.json 막힘(건너뜀)" : "products.json 응답 없음";
     const html = (await this.run(listHtmlScript(collection))) as {
       products?: HtmlCard[];
       hero?: string;
@@ -523,7 +533,10 @@ export class Shop {
    *   2순위 상품 페이지에 박힌 product-…-json  (Supreme 의 실제 경로 — .js 는 403 이다)
    */
   async resolve(handle: string): Promise<Product | null> {
-    const js = (await this.run(productScript(handle))) as { ok?: boolean; status?: number; product?: RawProduct } | null;
+    const js = this.productJsBlocked
+      ? null
+      : ((await this.run(productScript(handle))) as { ok?: boolean; status?: number; product?: RawProduct } | null);
+    if (js && [401, 403].includes(num(js.status))) this.productJsBlocked = true;
     if (js?.ok && js.product) {
       const product = normalizeProduct(js.product);
       if (!product.handle) product.handle = handle;

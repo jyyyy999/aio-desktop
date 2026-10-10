@@ -346,8 +346,9 @@ async function buyProduct(
     log.error(LINES.failed("장바구니", added.reason));
     return false;
   }
-  const cart = await shop.cart();
-  sayOk(LINES.carted(cart.count, what));
+  // 담은 뒤 장바구니를 다시 묻지 않고 곧장 체크아웃으로 간다 (빠르게 사려고 2026-10-10). 금액은 variant 값으로 센다.
+  const total = variant.price * quantity;
+  sayOk(LINES.carted(quantity, what));
   void notifyFound(cfg, target, `${what} · ${added.reason}`, product.image);
 
   sayStep(LINES.checkout("체크아웃으로 갑니다"));
@@ -356,11 +357,11 @@ async function buyProduct(
   const attempts = Math.max(1, cfg.buy.retry_attempts);
   let result: Awaited<ReturnType<typeof runCheckout>> | null = null;
   for (let attempt = 1; attempt <= attempts; attempt++) {
-    result = await runCheckout(browser, shop, checkoutProfile(cfg), cfg.origin, buyOptions(cfg), async (orderNo) => {
+    result = await runCheckout(browser, shop, checkoutProfile(cfg), cfg.origin, { ...buyOptions(cfg), cartKnown: attempt === 1 }, async (orderNo) => {
       state._buy.push({ at: new Date().toISOString(), url: `${cfg.origin}${product.url}`, order_no: orderNo, what });
       saveState(state);
       sayStar(LINES.paid(orderNo));
-      await notifyPaid(cfg, orderNo, what, cart.total);
+      await notifyPaid(cfg, orderNo, what, total);
     });
     if (result.ok || result.stage === "handed-off") break;
     if (attempt < attempts) {
