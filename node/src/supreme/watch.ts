@@ -197,7 +197,12 @@ export async function watchLoop(
     log.note(LINES.round(state.round, products.length, Math.max(1, Math.round(ms / 1000))));
 
     const alive: { event: DropEvent; decision: ReturnType<typeof decide> }[] = [];
+    // **한 바퀴에 상품 하나는 한 번만 판정한다.** products-json 은 재고가 사이즈마다 따로라 같은 상품의 이벤트가
+    // 사이즈 수만큼 온다(실측: 발견 줄 5번 · "사지 않음" 줄이 상품×사이즈). 사이즈는 decide 가 상품 전체에서 고른다.
+    // 사이즈 조건(variant 단계)에서만 떨어진 것은 다른 사이즈 이벤트로 다시 본다.
+    const judged = new Set<string>();
     for (const event of events) {
+      if (judged.has(event.product.handle)) continue;
       let product = event.product;
 
       // 1) **variant 를 해석하기 전에 키워드·가격으로 거른다.**
@@ -205,6 +210,7 @@ export async function watchLoop(
       //    조건에 안 맞는 상품 페이지까지 전부 받아야 한다 (36개 = 7초, 2026-10-08).
       const pre = matchProduct(product, rule);
       if (!pre.ok) {
+        judged.add(event.product.handle);
         if (!needsFullName(product, rule)) {
           log.note(`${describe(product, event.variant)} · 사지 않음: ${pre.reason}`);
           continue;
@@ -232,6 +238,7 @@ export async function watchLoop(
       }
       const here: DropEvent = { ...event, product };
       const decision = decide(here, rule, buy);
+      if (decision.stage !== "variant") judged.add(event.product.handle);
       const what = describe(product, decision.variant);
       const kindLine =
         event.kind === "restock"

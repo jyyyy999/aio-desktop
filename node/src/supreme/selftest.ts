@@ -585,6 +585,33 @@ async function pageJsonTests(): Promise<void> {
     }
     ok("Black XL 을 바로 산다", bought[0] === "Fuck You Zip Up Hooded Sweatshirt - Black / XLarge / 12", bought.join(" | ") || "안 샀다");
     ok("상품 페이지를 따로 받지 않는다", resolved.length === 0, resolved.join(","));
+
+    // 사이즈마다 이벤트가 와도 상품 하나는 한 번만 판정·발견한다 (실측: 같은 상품 발견 줄 5번).
+    const lines: string[] = [];
+    const multi = normalizeProduct(RAW); // 재고 있는 사이즈 둘(Black/Medium · White/Large)
+    const oneShop = {
+      lastResolveNote: "",
+      async list() {
+        return { mode: "page-json", status: 200, products: [multi], hero: "", note: "" };
+      },
+      async pageState() {
+        return { url: "", title: "", blocked: false, challenge: false, text: "" };
+      },
+      async resolve() {
+        return null;
+      },
+    } as unknown as Shop;
+    await watchLoop(
+      oneShop,
+      rule({ include: ["box"], silentFirstScan: false }),
+      buyRule(),
+      { origin: "https://mock", collections: ["all"], dryRun: true, maxRounds: 1, intervalMs: 0, jitterMs: 0 },
+      { async onEvents() {} },
+      { note: (t: string) => lines.push(t), ok: (t: string) => lines.push(t), warn() {}, error() {}, step() {}, tick() {} },
+      () => false,
+    );
+    const founds = lines.filter((l) => l.includes("[dry-run]")).length;
+    ok("사이즈가 여럿이어도 상품 하나는 한 번만 발견한다", founds === 1, `발견 줄 ${founds}번`);
   } finally {
     globalThis.fetch = realFetch;
     g.location = realLocation;
