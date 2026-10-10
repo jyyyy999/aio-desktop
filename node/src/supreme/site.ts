@@ -177,6 +177,17 @@ export function normalizeProduct(raw: RawProduct, priceDivisor = MINOR_UNITS): P
   };
 }
 
+/**
+ * 페이지에서 읽은 색을 이름에 붙인다 — "이름 - 색" (목록 카드의 alt 와 같은 모양).
+ * 색 옵션이 있는 상품(색이 variant 로 갈리는 상품)에는 붙이지 않는다 — 그건 variant 가 고른다.
+ */
+export function withPageColor(product: Product, color: string): Product {
+  const c = color.trim();
+  if (!c || product.options.some((o) => COLOR_OPTION_RE.test(o))) return product;
+  if (product.title.toLowerCase().includes(c.toLowerCase())) return product;
+  return { ...product, title: `${product.title} - ${c}`, tags: [product.tags, c].filter(Boolean).join(", ") };
+}
+
 /** HTML 폴백이 돌려준 카드 한 장 → 표준 모양 (variant 없음) */
 export interface HtmlCard {
   handle: string;
@@ -355,6 +366,18 @@ export function productScript(handle: string): string {
  * 가 통째로 박혀 있다 — 사이즈·재고·variant id 가 products.json 과 **같은 모양**으로 들어 있다.
  * 그래서 이 경로가 실제로 쓰는 길이다.
  */
+/**
+ * 상품 페이지의 **색 이름**. 슈프림은 색마다 상품이 따로인데 JSON 의 title 에도 옵션에도 색이 없다 —
+ * 색은 페이지의 자바스크립트 없는 판(no-js-content)에 `<h1>이름</h1><h2>색</h2>` 로만 있다 (2026-10-10 실측:
+ * "Fuck You Zip Up Hooded Sweatshirt" 의 JSON title 에 Black 이 없어 +black 이 빗나갔다).
+ */
+const NOJS_COLOR_RE = /class="no-js-content"[\s\S]*?<h1[^>]*>[\s\S]*?<\/h1>\s*<h2[^>]*>([\s\S]*?)<\/h2>/;
+
+export function colorFromProductHtml(html: string): string {
+  const m = NOJS_COLOR_RE.exec(html);
+  return m?.[1] ? m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim().slice(0, 60) : "";
+}
+
 export function productPageScript(handle: string): string {
   const path = `/products/${handle}`;
   const json = JSON.stringify(handle);
@@ -363,10 +386,12 @@ export function productPageScript(handle: string): string {
     const res = await fetch(${JSON.stringify(path)}, { credentials: "same-origin" });
     if (!res.ok) return { ok: false, status: res.status, product: null };
     const text = await res.text();
+    const cm = ${NOJS_COLOR_RE.toString()}.exec(text);
+    const color = cm && cm[1] ? cm[1].replace(/<[^>]+>/g, "").replace(/\\s+/g, " ").trim().slice(0, 60) : "";
     const m = text.match(/<script[^>]*id="product-[^"]*-json"[^>]*>([\\s\\S]*?)<\\/script>/);
     if (!m || !m[1]) return { ok: false, status: res.status, product: null, reason: "product-…-json 스크립트 없음 (" + text.length + "바이트)" };
     try {
-      return { ok: true, status: res.status, product: JSON.parse(m[1]) };
+      return { ok: true, status: res.status, product: JSON.parse(m[1]), color };
     } catch (e) {
       return { ok: false, status: res.status, product: null, reason: "JSON 해석 실패: " + String((e && e.message) || e) };
     }
@@ -547,10 +572,11 @@ export class Shop {
       ok?: boolean;
       status?: number;
       product?: RawProduct;
+      color?: string;
       reason?: string;
     } | null;
     if (page?.ok && page.product) {
-      const product = normalizeProduct(page.product);
+      const product = withPageColor(normalizeProduct(page.product), str(page.color));
       if (!product.handle) product.handle = handle;
       this.lastResolveNote = `상품 페이지 JSON (HTTP ${num(page.status)})`;
       return product;

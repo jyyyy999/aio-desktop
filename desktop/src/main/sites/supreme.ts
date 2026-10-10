@@ -371,7 +371,8 @@ export const supreme: SiteAdapter = {
           ? {
               buy: {
                 ...(cfg.buy as Record<string, unknown>),
-                size_priority: [sizeOnly, ...(((seed["buy"] as { size_priority?: string[] } | undefined)?.size_priority) ?? [])],
+                // 적은 사이즈만 — 씨앗의 우선순위를 뒤에 붙이면 그 사이즈가 없을 때 다른 사이즈를 산다.
+                size_priority: [sizeOnly],
               },
             }
           : {}),

@@ -210,7 +210,8 @@ export function pickVariant(product: Product, buy: BuyRule, rule: MonitorRule): 
     const hit = pool.find((v) => sizeEquals(v.size, want) || sizeEquals(v.title, want));
     if (hit) return { variant: hit, reason: `감시 사이즈(${want})` };
   }
-  if (buy.ignoreSizeIfSingleVariant && pool.length === 1) return { variant: pool[0] ?? null, reason: "재고 하나뿐" };
+  // (예전에는 여기서 "재고가 하나만 남았으면" 사이즈를 무시하고 그것을 샀다 — XL 을 적었는데 XL 이 품절이고
+  //  Small 만 남자 Small 을 담았다, 2026-10-10. 원사이즈 상품은 위의 "단일 variant" 가 이미 받는다.)
   const sizes = pool.map((v) => v.size || v.title || "?").join(", ");
   // 대체를 허용했을 때만 다른 사이즈로 간다 — 기본은 **사지 않는다** (엉뚱한 사이즈를 결제하지 않게).
   if (buy.sizeFallback) return { variant: pool[0] ?? null, reason: `대체 허용 — ${pool[0]?.size || pool[0]?.title} 로 담습니다` };

@@ -224,9 +224,11 @@ export async function watchLoop(
       }
 
       // 2) 살 만한 것만 variant 를 해석한다 (없으면 /products/<handle>.js → 막히면 상품 페이지 JSON).
+      //    **목록에서 읽은 이름을 버리지 않는다** — 상품 JSON 의 title 에는 색이 없어서, 덮어쓰면 목록 카드(alt)로
+      //    걸었던 +black 이 "black 없음" 으로 떨어졌다 (2026-10-10 드랍에서 Black 을 놓친 원인).
       if (!event.variant && !product.variants.length) {
         const resolved = await shop.resolve(product.handle);
-        if (resolved) product = resolved;
+        if (resolved) product = withFullName(product, resolved);
       }
       const here: DropEvent = { ...event, product };
       const decision = decide(here, rule, buy);

@@ -19,7 +19,7 @@ import { LINES, LINE_PATTERNS } from "./lines.js";
 import { buildSnapshot, decide, describeKeywords, describeOption, diff, isKeywordSpec, matchProduct, needsFullName, parseHandle, parseKeywordSpec, parseOptionSpec, pickVariant, sizeEquals, withFullName, type BuyRule, type MonitorRule } from "./match.js";
 import { agreementsScript, chooseCardMethodScript, clickContinueScript, fillScript, saveInfoScript, stageScript } from "./checkout-fill.js";
 import { focusScript, probeScript, tokenScript, unionRect, needsHuman, unfocusScript, type CaptchaProbe } from "./captcha.js";
-import { normalizeCard, normalizeProduct } from "./site.js";
+import { colorFromProductHtml, normalizeCard, normalizeProduct, productPageScript, withPageColor } from "./site.js";
 import { Shop } from "./site.js";
 import { SupremeBrowser } from "./browser.js";
 import { addToCart, runCheckout, type Profile } from "./checkout.js";
@@ -441,6 +441,79 @@ async function checkpointTests(): Promise<void> {
 }
 
 /**
+ * 2026-10-10 드랍에서 Black 을 놓친 자리 — 슈프림 상품 JSON 의 title 에는 색이 없고(옵션도 Size 뿐),
+ * 색은 목록 카드의 alt 와 상품 페이지의 no-js-content `<h2>` 에만 있다.
+ */
+async function pageColorTests(): Promise<void> {
+  console.log("\n== 색은 상품 페이지 h2 · 목록 alt 에만 있다 (Black 을 놓친 자리) ==");
+  // 실사이트에서 받은 상품 페이지 조각 그대로.
+  const page = `<script type="application/json" id="product-_pfxwppvsyw9diw-json">${JSON.stringify({
+    id: 1, title: "Fuck You Zip Up Hooded Sweatshirt", handle: "_pfxwppvsyw9diw", options: ["Size"],
+    variants: [
+      { id: 11, title: "Small", option1: "Small", available: true, price: 47800000 },
+      { id: 12, title: "XLarge", option1: "XLarge", available: true, price: 47800000 },
+    ],
+  })}</script> <div id="root"></div> <div class="no-js-content"> <div> <h1>Fuck You Zip Up Hooded Sweatshirt</h1> <h2>Black</h2> <p>Brushed-back fleece with …</p>`;
+  ok("페이지 조각에서 색을 읽는다", colorFromProductHtml(page) === "Black", colorFromProductHtml(page));
+
+  // 페이지 스크립트를 **그대로** 돌린다 (fetch 만 가짜) — 페이지 안에서 쓰는 정규식까지 확인한다.
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(page, { status: 200 })) as typeof fetch;
+  type PageResult = { color?: string; product?: { title?: string } } | null;
+  let fromScript = null as PageResult;
+  try {
+    fromScript = (await (new Function(`return ${productPageScript("_pfxwppvsyw9diw")}`))()) as PageResult;
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  ok("상품 페이지 스크립트가 색을 같이 돌려준다", fromScript?.color === "Black", JSON.stringify(fromScript?.color));
+
+  // Shop.resolve — .js 는 403, 페이지 JSON 에는 색이 없다 → 이름에 "- Black" 을 붙인다.
+  const runner = async (script: string): Promise<unknown> => {
+    if (script.includes(".js\"")) return { ok: false, status: 403, product: null };
+    return fromScript;
+  };
+  const resolved = await new Shop(runner).resolve("_pfxwppvsyw9diw");
+  ok("resolve 한 이름에 페이지 색이 붙는다", resolved?.title === "Fuck You Zip Up Hooded Sweatshirt - Black", resolved?.title);
+  ok("색 옵션이 있는 상품에는 붙이지 않는다", withPageColor(normalizeProduct(RAW), "Black").title === "Box Logo Tee");
+
+  // 감시 — 목록 alt 로 +black 이 걸린 뒤 사이즈를 읽으려고 상품을 받아도(JSON 에 색 없음) 놓치지 않는다.
+  const card = normalizeCard({ handle: "_pfxwppvsyw9diw", title: "Fuck You Zip Up Hooded Sweatshirt - Black", url: "/products/_pfxwppvsyw9diw", soldOut: false, image: "", price: 478000 });
+  const bought: string[] = [];
+  const fakeShop = {
+    lastResolveNote: "",
+    async list() {
+      return { mode: "html", status: 200, products: [card], hero: "", note: "" };
+    },
+    async pageState() {
+      return { url: "", title: "", blocked: false, challenge: false, text: "" };
+    },
+    // 페이지 색까지 못 읽은 최악의 경우 — 이름에 색이 없다.
+    async resolve() {
+      return normalizeProduct(JSON.parse(/>(\{[\s\S]*?\})<\/script>/.exec(page)![1]!));
+    },
+  } as unknown as Shop;
+  const quiet = { note() {}, ok() {}, warn() {}, error() {}, step() {}, tick() {} };
+  await watchLoop(
+    fakeShop,
+    rule({ include: ["fuck", "you", "black"], silentFirstScan: false }),
+    buyRule({ sizePriority: ["xlarge"] }),
+    { origin: "https://mock", collections: ["sweatshirts"], dryRun: false, maxRounds: 1, maxBuys: 1, intervalMs: 0, jitterMs: 0 },
+    {
+      async onEvents(_events, decided) {
+        bought.push(`${decided[0]?.event.product.title} / ${decided[0]?.decision.variant?.size}`);
+      },
+    },
+    quiet,
+    () => false,
+  );
+  ok("목록에서 잡은 Black 을 사이즈 해석 뒤에도 놓치지 않는다", bought.length === 1 && /Black/.test(bought[0]!), bought.join(" | ") || "안 샀다");
+  ok("적은 사이즈(XL)로 산다", /XLarge/.test(bought[0] ?? ""), bought.join(" | "));
+  const onlySmall = pickVariant(normalizeProduct({ ...RAW, options: ["Size"], variants: [{ id: 1, title: "Small", option1: "Small", available: true, price: 1 }, { id: 2, title: "XLarge", option1: "XLarge", available: false, price: 1 }] }), buyRule({ sizePriority: ["xlarge"] }), rule());
+  ok("적은 사이즈가 없으면 다른 사이즈를 사지 않는다", onlySmall.variant === null, onlySmall.reason);
+}
+
+/**
  * 대기열 안에서는 새로 고치지 않는다 — 다시 열면 자리를 잃을 수 있다 (2026-10-10 요청).
  * 시계를 가짜로 돌려 몇 분을 몇 ms 에 지나 보낸다.
  */
@@ -766,6 +839,7 @@ async function main(): Promise<void> {
   await colorFillTests();
   await buyFastTests();
   await queueNoReloadTests();
+  await pageColorTests();
   if (process.argv.includes("--browser")) {
     await browserTests();
     await htmlFallbackTests();

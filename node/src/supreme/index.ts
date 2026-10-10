@@ -824,7 +824,9 @@ async function main(): Promise<void> {
       cfg.include_keywords = [...cfg.include_keywords, optionSpec.color];
       cfg.colors = [...cfg.colors, optionSpec.color];
     }
-    if (optionSpec.size) cfg.buy.size_priority = [optionSpec.size, ...cfg.buy.size_priority];
+    // 사이즈를 적었으면 **그 사이즈만** 산다 — 기본 우선순위(Large·Medium·X-Large·Small) 앞에 붙이기만 했더니
+    // XL 이 없을 때 Small 을 담았다 (2026-10-10). 다른 사이즈도 괜찮으면 buy.size_fallback 을 켠다.
+    if (optionSpec.size) cfg.buy.size_priority = [optionSpec.size];
     if (!args.dryRun) {
       const missing = missingProfileFields(cfg, cfg.buy.click_pay);
       if (missing.length) log.error(`배송 정보가 비어 있으면 담지 않습니다 — ${missing.join(", ")}`);
