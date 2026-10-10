@@ -659,7 +659,6 @@ async function runPreloadDrop(cfg: SupremeConfig, state: State, args: Args): Pro
   const queueOpts = {
     url: checkoutUrl,
     timeoutMs: Math.max(1, drop.queue_timeout_minutes) * 60_000,
-    reloadEveryMs: 60_000,
     // 주문창으로 가는 길에 체크포인트(hCaptcha)가 끼면 사람에게 넘긴다 — 버튼은 대신 누른다.
     onCheckpoint: async (): Promise<boolean> => {
       const passed = await passCheckpoint(browser, { captcha: { timeoutMs: cfg.captcha.timeout_ms } });
@@ -738,7 +737,7 @@ async function runPreloadDrop(cfg: SupremeConfig, state: State, args: Args): Pro
 
     // 5) 다시 주문창 → 결제
     await browser.goto(checkoutUrl);
-    const again = await waitThroughQueue(browser, { ...queueOpts, timeoutMs: 3 * 60_000, reloadEveryMs: 30_000 });
+    const again = await waitThroughQueue(browser, { ...queueOpts, timeoutMs: 3 * 60_000 });
     if (!again.ok) log.warn(`다시 들어올 때 대기열이 떴습니다: ${again.reason}`);
     const result = await runCheckout(browser, shop, checkoutProfile(cfg), cfg.origin, buyOptions(cfg), async (orderNo) => {
       state._buy.push({ at: new Date().toISOString(), url: `${cfg.origin}${target.url}`, order_no: orderNo, what: describe(target, chosen.variant) });

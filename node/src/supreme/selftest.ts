@@ -427,7 +427,7 @@ async function checkpointTests(): Promise<void> {
     ok("/checkout 이 체크포인트로 돌려진다", isCheckpointUrl(await b.url()), await b.url());
     const human2 = fakeHuman(b);
     const queued = await waitThroughQueue(b, {
-      url: `${mock2.origin}/checkout`, timeoutMs: 40_000, reloadEveryMs: 0,
+      url: `${mock2.origin}/checkout`, timeoutMs: 40_000,
       onCheckpoint: async () => (await passCheckpoint(b, { captcha: { timeoutMs: 30_000 } })).ok,
     });
     await human2.stop();
@@ -437,6 +437,56 @@ async function checkpointTests(): Promise<void> {
   } finally {
     await browser?.quit();
     for (const one of shops) await one.close();
+  }
+}
+
+/**
+ * 대기열 안에서는 새로 고치지 않는다 — 다시 열면 자리를 잃을 수 있다 (2026-10-10 요청).
+ * 시계를 가짜로 돌려 몇 분을 몇 ms 에 지나 보낸다.
+ */
+async function queueNoReloadTests(): Promise<void> {
+  console.log("\n== 대기열 안에서는 새로고침하지 않는다 ==");
+  const realNow = Date.now;
+  let t = realNow();
+  Date.now = () => t;
+  const run = async (pages: { url: string; text: string }[]): Promise<{ gotos: number; ok: boolean }> => {
+    let i = 0;
+    let gotos = 0;
+    const host = {
+      async run() {
+        const p = pages[Math.min(i++, pages.length - 1)]!;
+        return { inQueue: false, formReady: p.text === "FORM", cookies: [], url: p.url, title: "", text: p.text };
+      },
+      async goto() {
+        gotos++;
+      },
+      async url() {
+        return "";
+      },
+      async sleep(ms: number) {
+        t += ms;
+      },
+      cancelled: () => false,
+    };
+    const out = await waitThroughQueue(host, { url: "https://shop.supreme.com/checkout", timeoutMs: 30 * 60_000 });
+    return { gotos, ok: out.ok };
+  };
+  try {
+    const q = "https://shop.supreme.com/checkout";
+    // 숫자 없는 대기열 문구로 3분 — 예전에는 60초마다 다시 열었다.
+    const noNumbers = await run([...Array(180).fill({ url: q, text: "You are in line. Please keep this page open." }), { url: q, text: "FORM" }]);
+    ok("숫자를 못 읽어도 대기열 안에서는 다시 열지 않는다", noNumbers.ok && noNumbers.gotos === 0, `goto ${noNumbers.gotos}번`);
+    // 대기열로 못 알아본 화면이어도 체크아웃 흐름 안이면 기다린다 — 예전에는 8초마다 다시 열었다.
+    const unknown = await run([
+      ...Array(120).fill({ url: "https://shop.supreme.com/throttle/queue?x=1", text: "Supreme · high demand, thanks for your patience" }),
+      { url: q, text: "FORM" },
+    ]);
+    ok("모르는 대기열 화면이어도 흐름 안이면 다시 열지 않는다", unknown.ok && unknown.gotos === 0, `goto ${unknown.gotos}번`);
+    // 흐름 밖(홈)으로 튕겨 났으면 주문창으로 다시 간다.
+    const bounced = await run([...Array(20).fill({ url: "https://shop.supreme.com/", text: "Supreme home page with lots of products" }), { url: q, text: "FORM" }]);
+    ok("체크아웃 흐름 밖으로 튕겨 나면 다시 간다", bounced.ok && bounced.gotos >= 1, `goto ${bounced.gotos}번`);
+  } finally {
+    Date.now = realNow;
   }
 }
 
@@ -715,6 +765,7 @@ async function main(): Promise<void> {
   pureTests();
   await colorFillTests();
   await buyFastTests();
+  await queueNoReloadTests();
   if (process.argv.includes("--browser")) {
     await browserTests();
     await htmlFallbackTests();

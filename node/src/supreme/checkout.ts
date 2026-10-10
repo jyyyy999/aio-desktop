@@ -15,6 +15,7 @@
 import { type CaptchaOptions, clearCaptchaIfAny, type CaptchaWindowHost, probeCaptcha } from "./captcha-window.js";
 import { isCheckpointUrl, passCheckpoint } from "./checkpoint.js";
 import { log } from "./log.js";
+import { inCheckoutFlow } from "./queue.js";
 import {
   agreementsScript,
   billingSameScript,
@@ -236,10 +237,16 @@ export async function runCheckout(
   }
 
   // 1) 체크아웃 페이지
-  host.note("체크아웃으로 갑니다");
-  await host.goto(`${origin}/checkout`);
   const formShown = (s: StageReport | null): s is StageReport & { present: Record<string, boolean> } =>
     !!s?.present && (s.present["email"] === true || s.present["address1"] === true || (s.cardFrames?.length ?? 0) > 0);
+  // **이미 주문창이면 다시 열지 않는다** (드랍: 대기열을 막 통과했다) — 다시 열면 한 판 늦고, 대기열 자리를 다시 물을 수 있다.
+  const here = (await host.run(stageScript())) as StageReport | null;
+  if (inCheckoutFlow(here?.url) && formShown(here)) {
+    host.note("이미 주문창입니다 — 다시 열지 않고 이어 갑니다");
+  } else {
+    host.note("체크아웃으로 갑니다");
+    await host.goto(`${origin}/checkout`);
+  }
   // 주문서가 뜨거나, **체크포인트(/checkpoint — hCaptcha)** 로 돌려지거나 둘 중 먼저 오는 것을 기다린다.
   const waitForm = async (): Promise<StageReport | null> =>
     (await waitFor(

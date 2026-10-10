@@ -182,8 +182,6 @@ export interface QueueOptions {
   url: string;
   /** 이만큼 기다려도 못 들어가면 실패로 돌려준다 */
   timeoutMs: number;
-  /** 문구가 안 바뀌고 멈춰 있으면 페이지를 다시 받아 보는 간격 (0 = 안 함) */
-  reloadEveryMs: number;
   /** 한 번 보고 끝 (대기열 상태 점검용) */
   once?: boolean;
   /**
@@ -193,7 +191,22 @@ export interface QueueOptions {
   onCheckpoint?: () => Promise<boolean>;
 }
 
-export const DEFAULT_QUEUE_OPTIONS: QueueOptions = { url: "/checkout", timeoutMs: 30 * 60_000, reloadEveryMs: 60_000 };
+export const DEFAULT_QUEUE_OPTIONS: QueueOptions = { url: "/checkout", timeoutMs: 30 * 60_000 };
+
+/**
+ * 체크아웃 흐름 안의 주소인가 — /checkout(s) · 대기열(throttle·queue) · 체크포인트.
+ * **이 안에 있으면 절대 다시 열지 않는다** — 대기열 자리는 그 페이지가 스스로 새로 고치며 지킨다.
+ * 다시 열면 자리를 잃을 수 있다 (2026-10-10 사용자 요청: 큐 안에서는 새로고침 금지).
+ */
+export function inCheckoutFlow(url: string | null | undefined): boolean {
+  let path = String(url || "");
+  try {
+    path = new URL(path).pathname;
+  } catch {
+    /* 이미 경로다 */
+  }
+  return /^\/(?:checkouts?|throttle|queue|checkpoint)(?:[/?#]|$)/i.test(path) || /\/checkouts?\//i.test(path);
+}
 
 export interface QueueOutcome {
   ok: boolean;
@@ -214,6 +227,7 @@ export async function waitThroughQueue(host: QueueHost, options: Partial<QueueOp
   let rounds = 0;
   let lastNote = 0;
   let lastReload = Date.now();
+  let blankSince = 0;
   let info: QueueInfo | null = null;
   let sawQueue = false;
 
@@ -265,16 +279,21 @@ export async function waitThroughQueue(host: QueueHost, options: Partial<QueueOp
         lastNote = Date.now();
         log.info(line);
       }
-      // 예상 시간도 앞 인원도 안 읽히면 페이지가 멈춘 것일 수 있다 — 가끔 다시 받아 본다.
-      if (opts.reloadEveryMs > 0 && info.ahead === null && info.eta === null && Date.now() - lastReload > opts.reloadEveryMs) {
+      // **대기열 안에서는 다시 열지 않는다** — 숫자를 못 읽어도(문구가 다른 판) 그대로 둔다. 자리는 페이지가 지킨다.
+      blankSince = 0;
+    } else {
+      // 대기열로 못 알아본 화면. 체크아웃 흐름 안이면(모르는 대기열 문구일 수 있다) 기다리기만 한다.
+      // 다시 여는 것은 흐름 밖으로 튕겨 났을 때(홈·장바구니 등)와 15초 넘게 빈 화면일 때뿐이다.
+      const blank = !info || String(info.text || "").trim().length < 20;
+      blankSince = blank ? blankSince || Date.now() : 0;
+      const bounced = !!info && !inCheckoutFlow(info.url);
+      const stuckBlank = blank && Date.now() - blankSince > 15_000;
+      if ((bounced || stuckBlank) && Date.now() - lastReload > 8000) {
         lastReload = Date.now();
-        log.info("대기열 문구가 멈춰 있어 페이지를 다시 받아 봅니다");
+        blankSince = 0;
+        log.info(bounced ? `체크아웃 흐름 밖으로 나왔습니다(${info?.url ?? "?"}) — 주문창으로 다시 갑니다` : "빈 화면이 15초 넘게 이어져 주문창을 다시 엽니다");
         await host.goto(opts.url);
       }
-    } else if (Date.now() - lastReload > 8000) {
-      // 대기열도 주문창도 아니다 — 아직 그려지는 중이거나, 다른 화면(차단·오류)이다.
-      lastReload = Date.now();
-      await host.goto(opts.url);
     }
 
     await host.sleep(1000);
