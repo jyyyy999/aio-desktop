@@ -9,6 +9,8 @@
  *   /checkout → /checkout/payment   2단계 체크아웃 (배송정보 → 카드)
  *   /hcaptcha-frame                  **cross-origin iframe + postMessage 토큰** 흐름 재현
  *   /checkpoint?return_to=/checkout  (checkpoint 옵션) Shopify 체크포인트 — 캡차를 풀고 **버튼을 눌러야** 넘어간다
+ *   /checkout 대기열                 (queueMs 옵션) "You are in line …" 화면이 스스로 새로 고치다 시간이 지나면 주문창
+ *   POST /cart/clear.js              장바구니 비우기 (드랍 때 미끼를 치운다)
  *   /thank_you                       주문 완료
  *
  * hCaptcha 재현이 핵심이다: iframe 안에서 사람이 체크하면 postMessage 로 부모에 토큰이 가고,
@@ -202,7 +204,17 @@ function cardFieldHtml(field: string): string {
   );
 }
 
-function hcaptchaFrameHtml(): string {
+/** 대기열 화면 — 진짜처럼 스스로 새로 고친다. 앞 인원·예상 시간이 줄어든다. */
+function queueHtml(ahead: number, eta: number): string {
+  return html(
+    "Queue - Supreme",
+    `<h2>You are in line</h2>
+<p>There are ${ahead} people in front of you. Estimated wait time: about ${eta} seconds</p>
+<script>setTimeout(() => location.reload(), 1500);</script>`,
+  );
+}
+
+function hcaptchaFrameHtml(autoSolve = false): string {
   return html(
     "hCaptcha",
     `<div style="display:flex;align-items:center;gap:12px;margin:-16px;padding:16px;background:#fafafa;border-radius:6px">
@@ -217,6 +229,7 @@ function hcaptchaFrameHtml(): string {
           parent.postMessage({ type: "hcaptcha-token", token: "P0_MOCK_TOKEN_" + Date.now() + "_" + "x".repeat(30) }, "*");
         }, 300);
       });
+      ${autoSolve ? 'setTimeout(() => document.getElementById("cb").click(), 800); // 사람이 푸는 척 (시험용)' : ""}
     </script>`
   );
 }
@@ -235,7 +248,15 @@ function json(res: ServerResponse, code: number, body: unknown): void {
 
 /** 모의 스토어를 띄운다. origin 을 돌려준다 (예: http://127.0.0.1:53123). */
 export async function startMockShop(
-  options: { blockedProductsJson?: boolean; blockedProductJson?: boolean; checkpoint?: boolean } = {},
+  options: {
+    blockedProductsJson?: boolean;
+    blockedProductJson?: boolean;
+    checkpoint?: boolean;
+    /** 처음 /checkout 에 온 뒤 이만큼 대기열에 세운다 (0 = 대기열 없음) */
+    queueMs?: number;
+    /** 캡차가 스스로 풀린다 — 사람 흉내를 넣을 수 없는 시험(CLI 를 따로 띄울 때)용 */
+    autoSolveCaptcha?: boolean;
+  } = {},
 ): Promise<MockShop> {
   const hits: string[] = [];
   const cart: MockShop["cart"] = [];
@@ -311,6 +332,11 @@ export async function startMockShop(
       json(res, 200, { id: variantId, quantity: Number(wanted?.quantity ?? 1), title: `${product?.title} - ${variant.title}` });
       return;
     }
+    if (path === "/cart/clear.js" && req.method === "POST") {
+      cart.length = 0;
+      json(res, 200, { item_count: 0, items: [] });
+      return;
+    }
     if (path === "/cart.js") {
       json(res, 200, {
         item_count: cart.reduce((n, i) => n + i.quantity, 0),
@@ -376,6 +402,24 @@ export async function startMockShop(
       res.end();
       return;
     }
+    // 대기열 — 처음 온 시각을 쿠키에 적고, queueMs 가 지나면 통과 쿠키를 주고 주문창을 낸다.
+    if (path === "/checkout" && (options.queueMs ?? 0) > 0 && !/mock_queue=passed/.test(req.headers.cookie ?? "")) {
+      const since = Number(/mock_queue_since=(\d+)/.exec(req.headers.cookie ?? "")?.[1] ?? 0);
+      const now = Date.now();
+      const elapsed = since ? now - since : 0;
+      const left = Math.max(0, (options.queueMs ?? 0) - elapsed);
+      if (left > 0) {
+        hits.push("queue-page");
+        const head: Record<string, string> = { "content-type": "text/html; charset=utf-8" };
+        if (!since) head["set-cookie"] = `mock_queue_since=${now}; Path=/`;
+        res.writeHead(200, head);
+        res.end(queueHtml(Math.ceil(left / 100), Math.ceil(left / 1000)));
+        return;
+      }
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "set-cookie": "mock_queue=passed; Path=/" });
+      res.end(checkoutHtml());
+      return;
+    }
     if (path === "/checkout") {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       res.end(checkoutHtml());
@@ -393,7 +437,7 @@ export async function startMockShop(
     }
     if (path === "/hcaptcha-frame") {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(hcaptchaFrameHtml());
+      res.end(hcaptchaFrameHtml(options.autoSolveCaptcha === true));
       return;
     }
     if (path === "/thank_you") {

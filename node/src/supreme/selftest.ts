@@ -7,8 +7,11 @@
  * --browser 는 **진짜 크롬**을 띄운다: 목록 → 담기 → 체크아웃 → 가짜 hCaptcha(사람이 클릭하는
  * 척) → 결제 버튼 → 주문 완료까지. 캡차 창까지 여는 유일한 시험이다.
  */
-import { mkdirSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { BASE, nextDropTime } from "./config.js";
 import { formatQueueLine, looksLikeQueue, parseQueue, queueScript, waitThroughQueue } from "./queue.js";
 import { isCheckpointUrl, passCheckpoint, submitCheckpointScript } from "./checkpoint.js";
@@ -437,6 +440,91 @@ async function checkpointTests(): Promise<void> {
   }
 }
 
+/** 원본 CLI 를 **따로 띄운다** — 임시 집(SUPREME_HOME)이라 진짜 설정·크롬 프로필을 건드리지 않는다. */
+function runCli(args: string[], home: string, timeoutMs: number): Promise<{ code: number | null; out: string }> {
+  return new Promise((resolve) => {
+    const entry = fileURLToPath(new URL("./index.js", import.meta.url));
+    const child = spawn(process.execPath, [entry, ...args], {
+      env: { ...process.env, SUPREME_HOME: home, NO_COLOR: "1" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let out = "";
+    child.stdout.on("data", (d: Buffer) => (out += d.toString("utf-8")));
+    child.stderr.on("data", (d: Buffer) => (out += d.toString("utf-8")));
+    const timer = setTimeout(() => {
+      out += "\n(시험: 시간 초과로 끊었습니다)";
+      child.kill();
+    }, timeoutMs);
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({ code, out: out.replace(/\x1b\[[0-9;]*m/g, "") });
+    });
+  });
+}
+
+/**
+ * **드랍 전체** — 미끼 담기 → /checkout → 체크포인트(캡차·버튼) → 대기열 → 주문창에서 드랍 시각까지 대기
+ * → 장바구니 교체 → 다시 주문창 → 결제. 원본 CLI(--drop)를 그대로 띄워 끝까지 간다.
+ * 사람 흉내는 넣을 수 없어(다른 프로세스의 크롬) 모의 캡차가 스스로 풀린다.
+ */
+async function dropTests(): Promise<void> {
+  console.log("\n== 드랍 전체 (미끼 → 체크포인트 → 대기열 → 대기 → 교체 → 결제) ==");
+  const mock = await startMockShop({ checkpoint: true, queueMs: 4000, autoSolveCaptcha: true });
+  const home = mkdtempSync(join(tmpdir(), "supreme-drop-"));
+  try {
+    writeFileSync(join(home, "supreme_config.json"), JSON.stringify({
+      origin: mock.origin,
+      browser: { headless: true, offscreen: false },
+      // 미끼는 첫 재고(Black/Medium 50011), 바꿔 담을 것은 Large → White/Large 50013 — 교체가 됐는지 장바구니로 안다.
+      buy: { size_priority: ["Large"], retry_attempts: 1, retry_delay_ms: 500 },
+      drop: { preload_lead_minutes: 1, queue_timeout_minutes: 2, late_grace_minutes: 1 },
+      captcha: { timeout_ms: 30_000 },
+      profile: {
+        email: "buyer@example.com", first_name: "Gil", last_name: "Hong", address1: "1-2-3 Teheran-ro", city: "Seoul",
+        state: "Seoul", zip: "06134", phone: "01012345678", country: "KR",
+        card_number: "4242424242424242", card_expiry: "12/30", card_cvv: "123", card_holder: "GIL HONG",
+      },
+    }), "utf-8");
+    // 드랍 시각은 25초 뒤 — 그 전에 미끼·체크포인트·대기열을 끝내고 주문창에서 기다려야 한다.
+    const at = new Date(Date.now() + 25_000);
+    const hhmmss = [at.getHours(), at.getMinutes(), at.getSeconds()].map((n) => String(n).padStart(2, "0")).join(":");
+    const product = `${mock.origin}/products/box-logo-tee`;
+    const { code, out } = await runCli(["--drop", "--preload", product, "--swap-to", product, "--drop-at", hhmmss], home, 150_000);
+    const tail = out.trim().split("\n").slice(-6).join(" / ");
+
+    const hit = (h: string) => mock.hits.indexOf(h);
+    const firstCheckout = hit("GET /checkout");
+    ok("드랍이 끝까지 돈다(종료 코드 0)", code === 0, `코드 ${code} · ${tail}`);
+    ok("미끼를 담고 주문창으로 간다", hit("POST /cart/add.js") >= 0 && firstCheckout > hit("POST /cart/add.js"), mock.hits.slice(0, 12).join(", "));
+    ok("체크포인트를 풀고 버튼을 대신 눌러 넘는다", hit("POST /checkpoint") > firstCheckout && /체크포인트를 통과했습니다/.test(out), tail);
+    ok("체크포인트에서 주소를 다시 열지 않는다", mock.hits.filter((h) => h === "GET /checkpoint").length <= 2, `GET /checkpoint ${mock.hits.filter((h) => h === "GET /checkpoint").length}번`);
+    ok("체크포인트 다음 대기열에 서서 통과한다", hit("queue-page") > hit("POST /checkpoint") && /대기열을 통과했습니다/.test(out), tail);
+    // 대기 중 줄은 제자리에서 고쳐 쓰는 줄이라 파이프로는 안 남는다 — 시각으로 본다: 교체가 드랍 시각(−2초)에 일어났나.
+    const clock = (pattern: RegExp): number | null => {
+      const line = out.split("\n").find((l) => pattern.test(l));
+      const m = line ? /(\d{2}):(\d{2}):(\d{2})/.exec(line) : null;
+      if (!m) return null;
+      const d = new Date(at);
+      d.setHours(Number(m[1]), Number(m[2]), Number(m[3]), 0);
+      return d.getTime();
+    };
+    const entered = clock(/주문창에 들어갔습니다/);
+    const swapped = clock(/장바구니를 바꿉니다/);
+    const dropMs = Math.floor(at.getTime() / 1000) * 1000;
+    ok(
+      "드랍 시각까지 주문창에서 기다렸다가 바꾼다",
+      entered !== null && swapped !== null && entered < dropMs - 3000 && swapped >= dropMs - 3000 && swapped <= dropMs + 3000,
+      `들어감 ${entered ? new Date(entered).toLocaleTimeString() : "?"} · 바꿈 ${swapped ? new Date(swapped).toLocaleTimeString() : "?"} · 드랍 ${hhmmss}`,
+    );
+    ok("드랍 시각에 미끼를 비운다", hit("POST /cart/clear.js") > hit("queue-page"), mock.hits.slice(-12).join(", "));
+    ok("원하는 상품으로 바꿔 담았다(장바구니엔 그것만)", mock.cart.length === 1 && mock.cart[0]?.variantId === "50013", JSON.stringify(mock.cart));
+    ok("바꿔 담은 뒤 결제까지 간다", hit("GET /thank_you") > hit("POST /cart/clear.js") && /주문 완료|결제 완료/.test(out), tail);
+  } finally {
+    await mock.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
 /**
  * 색 보완 — 목록 카드에 색이 빠져 와도(카드가 늦게 그려진다) `+camo` 가 걸려야 한다.
  * 크롬 없이 가짜 Shop 으로 감시 한 바퀴를 돈다: 후보만 상품 페이지 이름으로 보완하고, 나머지는 요청하지 않는다.
@@ -631,6 +719,7 @@ async function main(): Promise<void> {
     await browserTests();
     await htmlFallbackTests();
     await checkpointTests();
+    await dropTests();
   } else console.log("\n(크롬 왕복 시험은 --browser 를 붙이면 돕니다)");
 
   console.log(`\n== 결과: ${passed}개 통과 · ${failures.length}개 실패 ==`);

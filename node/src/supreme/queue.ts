@@ -220,7 +220,13 @@ export async function waitThroughQueue(host: QueueHost, options: Partial<QueueOp
   while (Date.now() - started < opts.timeoutMs) {
     if (host.cancelled()) return { ok: false, waitedMs: Date.now() - started, reason: "사람이 멈췄습니다", info, rounds };
 
-    info = asQueueInfo(await host.run(queueScript()));
+    // 대기열 화면은 스스로 새로 고친다 — 그 순간에 읽으면 문서가 없어 예외가 난다. 한 번 거르고 다시 본다.
+    try {
+      info = asQueueInfo(await host.run(queueScript()));
+    } catch {
+      await host.sleep(300);
+      continue;
+    }
 
     if (info?.formReady) {
       if (sawQueue) sayOk(`대기열을 통과했습니다 (${Math.round((Date.now() - started) / 1000)}초) — 주문창이 떴습니다`);
