@@ -32,7 +32,7 @@ import {
 import { LINES } from "./lines.js";
 import { describe, describeKeywords, describeOption, parseHandle, parseKeywordSpec, parseOptionSpec, pickVariant, sizeEquals, type BuyRule, type DropEvent, type MonitorRule } from "./match.js";
 import { formatQueueLine, peekQueue, waitThroughQueue } from "./queue.js";
-import { Shop, type Product, type Variant } from "./site.js";
+import { fetchPageProducts, Shop, type Product, type Variant } from "./site.js";
 import { SupremeBrowser, BrowserError } from "./browser.js";
 import { addToCart, runCheckout, type BuyOptions, type Profile as CheckoutProfile } from "./checkout.js";
 import { passCheckpoint } from "./checkpoint.js";
@@ -311,7 +311,18 @@ async function openBrowser(cfg: SupremeConfig): Promise<SupremeBrowser> {
 }
 
 /** 페이지가 홈(스토어프론트 오리진)에 있게 한다 — 페이지 안 fetch 는 같은 오리진에서만 뜻이 있다. */
-async function shopOf(browser: SupremeBrowser, cfg: SupremeConfig): Promise<Shop> {
+async function shopOf(
+  browser: SupremeBrowser,
+  cfg: SupremeConfig,
+  prefetch?: Promise<Awaited<ReturnType<typeof fetchPageProducts>>>,
+): Promise<Shop> {
+  // **뜨자마자 가장 가벼운 슈프림 주소로 가 둔다** — 담기·장바구니 fetch 는 슈프림 주소의 페이지에서만 된다.
+  // 홈(/)은 /pages/shop 으로 넘어가며 1~2초, /robots.txt 는 약 0.4초 (2026-10-10 실측).
+  try {
+    if (!(await browser.url()).startsWith(cfg.origin)) await browser.goto(`${cfg.origin}/robots.txt`);
+  } catch {
+    /* 못 가면 처음 쓸 때 홈으로 간다 (아래) */
+  }
   return new Shop(
     async (script: string) => {
       const here = await browser.url();
@@ -320,7 +331,14 @@ async function shopOf(browser: SupremeBrowser, cfg: SupremeConfig): Promise<Shop
     },
     // 컬렉션 주소로 **먼저 이동**한다 — 홈을 긁으면 신상품 36개만 보인다 (2026-10-08).
     { goto: (url: string) => browser.goto(url), origin: cfg.origin },
+    // 목록은 크롬 없이 Node 에서 받는다 (막히면 크롬 안 fetch 로). 첫 바퀴는 크롬이 뜨는 동안 받아 둔 것.
+    { direct: true, cookie: cookieOf(cfg), ...(prefetch ? { prefetch } : {}) },
   );
+}
+
+/** 크롬을 띄우기 **전에** 첫 바퀴 목록을 받기 시작한다 — 크롬이 뜨는 1~4초 동안 이미 상품을 안다. */
+function prefetchList(cfg: SupremeConfig): Promise<Awaited<ReturnType<typeof fetchPageProducts>>> {
+  return fetchPageProducts(cfg.origin, cfg.collections[0] ?? "all", cookieOf(cfg)).catch(() => null);
 }
 
 /* ── 감시 ─────────────────────────────────────────────────── */
@@ -392,8 +410,9 @@ async function buyProduct(
 
 async function runWatch(cfg: SupremeConfig, state: State, args: Args): Promise<void> {
   const dryRun = args.dryRun;
+  const early = prefetchList(cfg);
   const browser = await openBrowser(cfg);
-  const shop = await shopOf(browser, cfg);
+  const shop = await shopOf(browser, cfg, early);
   const rule = monitorRule(cfg);
   const buy = buyRule(cfg);
   const options = watchOptions(cfg, dryRun, cfg.buy.max_buys_per_run);
@@ -483,8 +502,9 @@ async function runWatch(cfg: SupremeConfig, state: State, args: Args): Promise<v
 
 /** 한 바퀴만 보고 끝 (--once · --dry-run 단독) */
 async function runOnce(cfg: SupremeConfig, state: State, dryRun: boolean): Promise<void> {
+  const early = prefetchList(cfg);
   const browser = await openBrowser(cfg);
-  const shop = await shopOf(browser, cfg);
+  const shop = await shopOf(browser, cfg, early);
   try {
     // **실행할 때마다 장바구니를 비운다** (지난 판의 미끼·실패한 담기가 남아 함께 결제되지 않게).
     if (cfg.buy.clear_cart_first) {

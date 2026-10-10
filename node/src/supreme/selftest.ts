@@ -19,7 +19,7 @@ import { LINES, LINE_PATTERNS } from "./lines.js";
 import { buildSnapshot, decide, describeKeywords, describeOption, diff, isKeywordSpec, matchProduct, needsFullName, parseHandle, parseKeywordSpec, parseOptionSpec, pickVariant, sizeEquals, withFullName, type BuyRule, type MonitorRule } from "./match.js";
 import { agreementsScript, chooseCardMethodScript, clickContinueScript, fillScript, saveInfoScript, stageScript } from "./checkout-fill.js";
 import { focusScript, probeScript, tokenScript, unionRect, needsHuman, unfocusScript, type CaptchaProbe } from "./captcha.js";
-import { colorFromProductHtml, normalizeCard, normalizeProduct, productPageScript, withPageColor } from "./site.js";
+import { colorFromProductHtml, fetchPageProducts, normalizeCard, normalizeProduct, productPageScript, withPageColor } from "./site.js";
 import { Shop } from "./site.js";
 import { SupremeBrowser } from "./browser.js";
 import { addToCart, runCheckout, type Profile } from "./checkout.js";
@@ -612,6 +612,27 @@ async function pageJsonTests(): Promise<void> {
     );
     const founds = lines.filter((l) => l.includes("[dry-run]")).length;
     ok("사이즈가 여럿이어도 상품 하나는 한 번만 발견한다", founds === 1, `발견 줄 ${founds}번`);
+
+    // 크롬 없이 — 첫 바퀴는 크롬이 뜨는 동안 미리 받은 것, 그다음은 Node 에서. 크롬은 부르지 않는다.
+    let chromeCalls = 0;
+    const chrome = async (script: string): Promise<unknown> => {
+      chromeCalls++;
+      return (new Function(`return ${script}`))();
+    };
+    const early = fetchPageProducts("https://shop.supreme.com", "sweatshirts");
+    const fastShop = new Shop(chrome, { goto: async () => {}, origin: "https://shop.supreme.com" }, { direct: true, prefetch: early });
+    const first = await fastShop.list("sweatshirts");
+    ok("첫 바퀴는 미리 받은 것을 쓴다(크롬을 안 부른다)", /미리 받음/.test(first.note) && first.products.length === 2 && chromeCalls === 0, `${first.note} · 크롬 ${chromeCalls}번`);
+    await new Promise((r) => setTimeout(r, 1600));
+    const second = await fastShop.list("sweatshirts");
+    ok("다음 바퀴는 Node 에서 받는다(크롬을 안 부른다)", /\(Node\)/.test(second.note) && chromeCalls === 0, `${second.note} · 크롬 ${chromeCalls}번`);
+
+    // Node 가 막히면(403 챌린지) 크롬 안 fetch 로 간다.
+    globalThis.fetch = (async (input: unknown) =>
+      String(input).startsWith("https://") ? new Response("<html>Just a moment...</html>", { status: 403 }) : new Response(html, { status: 200 })) as typeof fetch;
+    const blockedShop = new Shop(chrome, { goto: async () => {}, origin: "https://shop.supreme.com" }, { direct: true });
+    const viaChrome = await blockedShop.list("sweatshirts");
+    ok("Node 가 막히면 크롬 안에서 받는다", /\(크롬\)/.test(viaChrome.note) && viaChrome.products.length === 2 && chromeCalls === 1, `${viaChrome.note} · 크롬 ${chromeCalls}번`);
   } finally {
     globalThis.fetch = realFetch;
     g.location = realLocation;

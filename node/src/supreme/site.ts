@@ -366,6 +366,48 @@ export function pageProductsScript(collection: string, expectedOrigin = ""): str
 })()`;
 }
 
+/** Node 에서 직접 받을 때 쓰는 브라우저 머리글 (기본 "node" 로 가면 막힐 수 있다). */
+export const BROWSER_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36";
+
+/** products-json 의 상품을 쓰는 칸만 남긴다 (pageProductsScript 안의 것과 같은 모양). */
+export function compactPageProducts(data: { products?: unknown[]; allProductsCount?: unknown }): {
+  total: number;
+  products: NonNullable<NonNullable<PageProductsResult>["products"]>;
+} {
+  const list = (Array.isArray(data.products) ? data.products : []) as Record<string, unknown>[];
+  const products = list.map((p) => ({
+    id: p["id"], title: p["title"], handle: p["handle"], url: p["url"],
+    type: str(p["type"] ?? p["product_type"]), product_type: str(p["product_type"] ?? p["type"]),
+    color: str(p["color"]), is_new: p["is_new"] === true, image: str(p["image"]), tags: str(p["style"]),
+    options: Array.isArray(p["options"]) ? p["options"] : [],
+    variants: (Array.isArray(p["variants"]) ? (p["variants"] as Record<string, unknown>[]) : []).map((v) => ({
+      id: v["id"], title: v["title"], option1: v["option1"], option2: v["option2"], option3: v["option3"],
+      options: v["options"], available: v["available"], price: v["price"], sku: v["sku"],
+    })),
+  }));
+  return { total: num(data.allProductsCount) || products.length, products };
+}
+
+/**
+ * **크롬 없이** Node 에서 컬렉션 HTML 을 받아 products-json 을 꺼낸다 (2026-10-10 실측: 200 · 223개 · 약 1.2초).
+ * 크롬이 뜨는 동안 첫 바퀴를 미리 받아 두고, 감시도 크롬을 쓰지 않는다. 막히면(403·챌린지) 부르는 쪽이 크롬 안 fetch 로 간다.
+ */
+export async function fetchPageProducts(origin: string, collection: string, cookie = ""): Promise<PageProductsResult> {
+  try {
+    const res = await fetch(`${origin}/collections/${collection}?_=${Date.now()}`, {
+      headers: { "user-agent": BROWSER_UA, accept: "text/html,application/xhtml+xml", ...(cookie ? { cookie } : {}) },
+    });
+    const text = await res.text();
+    const m = /<script[^>]*id="products-json"[^>]*>([\s\S]*?)<\/script>/.exec(text);
+    if (!m?.[1]) return { ok: res.ok, status: res.status, found: false };
+    const { total, products } = compactPageProducts(JSON.parse(m[1]) as { products?: unknown[]; allProductsCount?: unknown });
+    return { ok: true, status: res.status, found: true, total, products };
+  } catch (e) {
+    return { ok: false, status: 0, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /**
  * 이 상품이 그 컬렉션(#카테고리)에 드나 — 상품의 type 과 컬렉션 이름을 글자만 남겨 견준다
  * ("tops-sweaters" = "tops/sweaters"). all 은 전부, new 는 is_new.
@@ -561,7 +603,18 @@ export class Shop {
   constructor(
     private readonly run: PageRunner,
     private readonly nav?: { goto(url: string): Promise<void>; origin: string },
-  ) {}
+    /**
+     * 빠른 길. direct = 목록을 크롬 없이 Node 에서 받는다. prefetch = 크롬이 뜨는 동안 미리 받아 둔 첫 바퀴.
+     */
+    private readonly fast: { direct?: boolean; cookie?: string; prefetch?: Promise<PageProductsResult> } = {},
+  ) {
+    this.prefetch = fast.prefetch ?? null;
+  }
+
+  /** 아직 안 쓴 미리 받은 첫 바퀴 */
+  private prefetch: Promise<PageProductsResult> | null;
+  /** Node 에서 받기가 연달아 실패한 수 — 2번이면 크롬 안 fetch 로만 간다 (막혔다). */
+  private directFailures = 0;
 
   /** 컬렉션 페이지에 products-json 이 없는 스토어 — 다시 찾지 않는다. */
   private pageJsonMissing = false;
@@ -578,7 +631,28 @@ export class Shop {
     const ask = async (): Promise<PageProductsResult> =>
       (await this.run(pageProductsScript(collection, this.nav?.origin ?? ""))) as PageProductsResult;
     const cached = this.pageJsonCache && Date.now() - this.pageJsonCache.at < 1500 ? this.pageJsonCache.got : null;
-    let got = cached ?? (await ask());
+    let got = cached;
+    let via = cached ? "방금 받음" : "크롬";
+    if (!got && this.prefetch) {
+      // 크롬이 뜨는 동안 Node 에서 미리 받아 둔 첫 바퀴.
+      const early = await this.prefetch;
+      this.prefetch = null;
+      if (early?.ok && early.found) {
+        got = early;
+        via = "미리 받음";
+      }
+    }
+    if (!got && this.fast.direct && this.nav && this.directFailures < 2) {
+      const direct = await fetchPageProducts(this.nav.origin, collection, this.fast.cookie ?? "");
+      if (direct?.ok && direct.found) {
+        got = direct;
+        via = "Node";
+        this.directFailures = 0;
+      } else {
+        this.directFailures++;
+      }
+    }
+    got ??= await ask();
     if (got?.noOrigin && this.nav) {
       // 아직 슈프림 주소가 아니다(빈 창) — 한 번만 컬렉션으로 가 둔다. 이후로는 그 자리에서 fetch 만 한다.
       try {
@@ -607,7 +681,7 @@ export class Shop {
       status: num(got.status),
       products,
       hero: "",
-      note: `products-json ${products.length}/${num(got.total) || all.length}개`,
+      note: `products-json ${products.length}/${num(got.total) || all.length}개 (${via})`,
     };
   }
 
