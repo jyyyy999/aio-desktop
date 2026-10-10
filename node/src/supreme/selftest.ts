@@ -514,6 +514,84 @@ async function pageColorTests(): Promise<void> {
 }
 
 /**
+ * **products-json** — 슈프림 컬렉션 페이지 HTML 에 전 상품(색 · 사이즈별 재고 · variant id)이 통째로 들어 있다.
+ * 스크롤·상품 페이지 없이 fetch 한 번으로 잡는다 (2026-10-10 사용자 제안 · 실사이트 확인).
+ */
+async function pageJsonTests(): Promise<void> {
+  console.log("\n== products-json 한 번으로 전 상품 (스크롤 없이) ==");
+  const variant = (id: number, title: string, available: boolean) => ({ id, title, option1: title, option2: null, option3: null, options: [title], available, price: 47800000, sku: `S-${id}` });
+  // 실사이트 products-json 모양 그대로 (칸 이름·값의 꼴).
+  const data = {
+    allProductsCount: 3,
+    products: [
+      { id: 1, title: "Fuck You Zip Up Hooded Sweatshirt", handle: "_pfxwppvsyw9diw", url: "/products/_pfxwppvsyw9diw", product_type: "sweatshirts", type: "sweatshirts", color: "Black", style: "SW43", is_new: true, image: "//x/1.jpg", options: ["Size"], available: true, variants: [variant(11, "Small", false), variant(12, "XLarge", true)] },
+      { id: 2, title: "Fuck You Zip Up Hooded Sweatshirt", handle: "5iilx-k9dwcoh8o1", url: "/products/5iilx-k9dwcoh8o1", product_type: "sweatshirts", type: "sweatshirts", color: "Brown", style: "SW43", is_new: true, image: "//x/2.jpg", options: ["Size"], available: false, variants: [variant(21, "Small", false)] },
+      { id: 3, title: "Cable Knit Sweater", handle: "k6gepniu1zwslmvd", url: "/products/k6gepniu1zwslmvd", product_type: "tops/sweaters", type: "tops/sweaters", color: "Navy", style: "SW10", is_new: false, image: "//x/3.jpg", options: ["Size"], available: true, variants: [variant(31, "Large", true)] },
+    ],
+  };
+  const html = `<html><body><div id="root"></div><script type="application/json" id="products-json">${JSON.stringify(data)}</script></body></html>`;
+
+  const realFetch = globalThis.fetch;
+  const g = globalThis as unknown as { location?: unknown };
+  const realLocation = g.location;
+  let fetches = 0;
+  globalThis.fetch = (async () => {
+    fetches++;
+    return new Response(html, { status: 200 });
+  }) as typeof fetch;
+  g.location = { protocol: "https:", origin: "https://shop.supreme.com" };
+  try {
+    // 페이지 안에서 도는 스크립트를 그대로 돌린다 (fetch · location 만 가짜).
+    const runner = async (script: string): Promise<unknown> => (new Function(`return ${script}`))();
+    const shop = new Shop(runner, { goto: async () => {}, origin: "https://shop.supreme.com" });
+    const sweat = await shop.list("sweatshirts");
+    ok("products-json 으로 받는다(스크롤 없음)", sweat.mode === "page-json", `${sweat.mode} ${sweat.note}`);
+    ok("#sweatshirts 는 type 으로 거른다", sweat.products.length === 2, sweat.products.map((p) => p.title).join(" | "));
+    const black = sweat.products.find((p) => p.handle === "_pfxwppvsyw9diw");
+    ok("색이 이름에 붙는다(Fuck You … - Black)", black?.title === "Fuck You Zip Up Hooded Sweatshirt - Black", black?.title);
+    ok("사이즈별 재고·variant id 가 같이 온다", black?.variants.find((v) => v.size === "XLarge")?.available === true && black?.variants[1]?.id === "12", JSON.stringify(black?.variants.map((v) => [v.id, v.size, v.available])));
+    ok("가격은 화면 단위", black?.priceMin === 478000, `${black?.priceMin}`);
+    const tops = await shop.list("tops-sweaters");
+    ok("tops-sweaters = tops/sweaters", tops.products.length === 1 && /Navy/.test(tops.products[0]?.title ?? ""), tops.products.map((p) => p.title).join(" | "));
+    ok("한 바퀴 안에서는 다시 받지 않는다(카테고리가 여럿이어도 fetch 1번)", fetches === 1, `${fetches}번`);
+    const fresh = await shop.list("new");
+    ok("new 는 is_new 로", fresh.products.length === 2, fresh.products.map((p) => p.title).join(" | "));
+
+    // 감시가 상품 페이지를 받지 않고 바로 산다 (variant 가 이미 있다).
+    const resolved: string[] = [];
+    const bought: string[] = [];
+    const watchShop = Object.assign(Object.create(shop) as Shop, {
+      async resolve(h: string) {
+        resolved.push(h);
+        return null;
+      },
+    });
+    {
+      const quiet = { note() {}, ok() {}, warn() {}, error() {}, step() {}, tick() {} };
+      await new Promise((r) => setTimeout(r, 1600)); // 캐시가 지나게
+      await watchLoop(
+        watchShop,
+        rule({ include: ["fuck", "you", "black"], silentFirstScan: false }),
+        buyRule({ sizePriority: ["xlarge"] }),
+        { origin: "https://shop.supreme.com", collections: ["sweatshirts"], dryRun: false, maxRounds: 1, maxBuys: 1, intervalMs: 0, jitterMs: 0 },
+        {
+          async onEvents(_e, decided) {
+            bought.push(`${decided[0]?.event.product.title} / ${decided[0]?.decision.variant?.size} / ${decided[0]?.decision.variant?.id}`);
+          },
+        },
+        quiet,
+        () => false,
+      );
+    }
+    ok("Black XL 을 바로 산다", bought[0] === "Fuck You Zip Up Hooded Sweatshirt - Black / XLarge / 12", bought.join(" | ") || "안 샀다");
+    ok("상품 페이지를 따로 받지 않는다", resolved.length === 0, resolved.join(","));
+  } finally {
+    globalThis.fetch = realFetch;
+    g.location = realLocation;
+  }
+}
+
+/**
  * 대기열 안에서는 새로 고치지 않는다 — 다시 열면 자리를 잃을 수 있다 (2026-10-10 요청).
  * 시계를 가짜로 돌려 몇 분을 몇 ms 에 지나 보낸다.
  */
@@ -840,6 +918,7 @@ async function main(): Promise<void> {
   await buyFastTests();
   await queueNoReloadTests();
   await pageColorTests();
+  await pageJsonTests();
   if (process.argv.includes("--browser")) {
     await browserTests();
     await htmlFallbackTests();

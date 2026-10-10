@@ -46,7 +46,8 @@ export interface Product {
 }
 
 export interface ListResult {
-  mode: "json" | "html" | "none";
+  /** page-json = 컬렉션 페이지의 products-json (슈프림의 빠른 길) */
+  mode: "page-json" | "json" | "html" | "none";
   status: number;
   products: Product[];
   hero: string;
@@ -333,6 +334,60 @@ export function listHtmlScript(collection: string): string {
 })()`;
 }
 
+/**
+ * 컬렉션 페이지 HTML 을 **fetch 만 해서** products-json 을 꺼낸다 (렌더링·스크롤 없음).
+ * WebDriver 로 되돌려 받는 양을 줄이려고 쓰는 칸만 남긴다.
+ * @param expectedOrigin 지금 페이지가 이 오리진이 아니면 noOrigin (다른 사이트를 fetch 하지 않게)
+ */
+export function pageProductsScript(collection: string, expectedOrigin = ""): string {
+  const path = `/collections/${collection}`;
+  return `(async () => {
+  const expected = ${JSON.stringify(expectedOrigin)};
+  if (!/^https?:$/.test(location.protocol) || (expected && location.origin !== expected)) return { ok: false, noOrigin: true };
+  try {
+    const res = await fetch(${JSON.stringify(path)} + "?_=" + Date.now(), { credentials: "same-origin", cache: "no-store" });
+    const text = await res.text();
+    const m = text.match(/<script[^>]*id="products-json"[^>]*>([\\s\\S]*?)<\\/script>/);
+    if (!m) return { ok: res.ok, status: res.status, found: false };
+    const data = JSON.parse(m[1]);
+    const products = (data.products || []).map((p) => ({
+      id: p.id, title: p.title, handle: p.handle, url: p.url, type: p.type || p.product_type || "",
+      product_type: p.product_type || p.type || "", color: p.color || "", is_new: !!p.is_new, image: p.image || "",
+      tags: p.style || "", options: p.options || [],
+      variants: (p.variants || []).map((v) => ({
+        id: v.id, title: v.title, option1: v.option1, option2: v.option2, option3: v.option3,
+        options: v.options, available: v.available, price: v.price, sku: v.sku,
+      })),
+    }));
+    return { ok: true, status: res.status, found: true, total: data.allProductsCount || products.length, products };
+  } catch (e) {
+    return { ok: false, status: 0, error: String((e && e.message) || e) };
+  }
+})()`;
+}
+
+/**
+ * 이 상품이 그 컬렉션(#카테고리)에 드나 — 상품의 type 과 컬렉션 이름을 글자만 남겨 견준다
+ * ("tops-sweaters" = "tops/sweaters"). all 은 전부, new 는 is_new.
+ */
+export function inCollection(p: { type?: unknown; product_type?: unknown; is_new?: unknown }, collection: string): boolean {
+  const norm = (s: unknown) => String(s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const c = norm(collection);
+  if (!c || c === "all") return true;
+  if (c === "new") return p.is_new === true;
+  return norm(p.type) === c || norm(p.product_type) === c;
+}
+
+type PageProductsResult = {
+  ok?: boolean;
+  noOrigin?: boolean;
+  found?: boolean;
+  status?: number;
+  total?: number;
+  products?: (RawProduct & { color?: string; is_new?: boolean; type?: string })[];
+  error?: string;
+} | null;
+
 /** 봇 차단·챌린지 화면인지 — 사람에게 창을 넘길지 판단한다. */
 export function pageStateScript(): string {
   return `(() => {
@@ -508,7 +563,59 @@ export class Shop {
     private readonly nav?: { goto(url: string): Promise<void>; origin: string },
   ) {}
 
+  /** 컬렉션 페이지에 products-json 이 없는 스토어 — 다시 찾지 않는다. */
+  private pageJsonMissing = false;
+  /** 방금 받은 전체 목록 — 한 바퀴에 #카테고리가 여럿이어도 같은 880KB 를 여러 번 받지 않게 (1.5초만 쓴다). */
+  private pageJsonCache: { at: number; got: PageProductsResult } | null = null;
+
+  /**
+   * **products-json 한 번으로 전체를 받는다** (2026-10-10 실측: 슈프림은 어느 /collections/<c> HTML 에도
+   * `<script id="products-json">` 로 전 상품 223개 · 색 · 사이즈별 재고 · variant id 를 통째로 넣어 준다).
+   * 페이지를 열지도, 스크롤하지도, 상품마다 페이지를 받지도 않는다 — fetch 한 번(약 0.6~1초).
+   * 카테고리(#sweatshirts)는 상품의 type 으로 거른다. 없거나 못 거르면 null (예전 길로).
+   */
+  private async listFromPageJson(collection: string): Promise<ListResult | null> {
+    const ask = async (): Promise<PageProductsResult> =>
+      (await this.run(pageProductsScript(collection, this.nav?.origin ?? ""))) as PageProductsResult;
+    const cached = this.pageJsonCache && Date.now() - this.pageJsonCache.at < 1500 ? this.pageJsonCache.got : null;
+    let got = cached ?? (await ask());
+    if (got?.noOrigin && this.nav) {
+      // 아직 슈프림 주소가 아니다(빈 창) — 한 번만 컬렉션으로 가 둔다. 이후로는 그 자리에서 fetch 만 한다.
+      try {
+        await this.nav.goto(`${this.nav.origin}/collections/${collection}`);
+      } catch {
+        /* 못 가면 예전 길로 */
+      }
+      got = await ask();
+    }
+    if (!got?.ok) return null;
+    if (!cached) this.pageJsonCache = { at: Date.now(), got };
+    if (!got.found) {
+      this.pageJsonMissing = true;
+      return null;
+    }
+    const all = got.products ?? [];
+    const picked = all.filter((p) => inCollection(p, collection));
+    if (!picked.length) return null; // 모르는 컬렉션 이름 — 그 페이지를 직접 긁는 예전 길로
+    const products = picked.map((p) => {
+      const product = withPageColor(normalizeProduct(p), str(p.color));
+      const extra = [p.is_new ? "new" : "", str(p.type ?? p.product_type)].filter(Boolean);
+      return extra.length ? { ...product, tags: [product.tags, ...extra].filter(Boolean).join(", ") } : product;
+    });
+    return {
+      mode: "page-json",
+      status: num(got.status),
+      products,
+      hero: "",
+      note: `products-json ${products.length}/${num(got.total) || all.length}개`,
+    };
+  }
+
   async list(collection: string): Promise<ListResult> {
+    if (!this.pageJsonMissing) {
+      const fast = await this.listFromPageJson(collection);
+      if (fast) return fast;
+    }
     // **컬렉션 주소로 먼저 간다.** 지금 페이지(홈)를 긁으면 신상품 그리드만 보인다.
     if (this.nav) {
       try {
