@@ -3,7 +3,9 @@
  * TaskManager 와 워커는 이 모양만 알고, 롯데·네이버가 어떻게 다른지는 모른다.
  */
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
-import type { CommonSettings, LoginStatus, MonitorDef, Profile, SiteId, SiteInfo, SiteSettings, TaskDef } from "../../shared/types.js";
+import type {
+  CommonSettings, LoginStatus, MonitorDef, Profile, QueuePeek, SiteId, SiteInfo, SiteSettings, TaskDef,
+} from "../../shared/types.js";
 
 /**
  * 모니터가 원본 설정의 max_buys_per_run 에 적는 값 — 사실상 끝없이. dry-run 도 "샀을 것" 을 산 것으로 세어 이 수에
@@ -223,6 +225,11 @@ export interface SiteAdapter {
   /** 구매 중인지 알아보는 법. 없으면 "멈춤 = Ctrl+C" 가 이미 구매를 기다려 준다는 뜻이다 (네이버). */
   busy?: BusySignal;
   progress: ProgressSignal;
+  /**
+   * 열리기 전 대기열을 바깥에서 본다 — 쿠키 없이 읽기만 하고 줄에 서지 않는다. 대기열이 있는 사이트(롯데)만.
+   * 태스크 창이 켰을 때만 main 이 몇 초마다 부른다. 못 읽으면 error 에 까닭.
+   */
+  peekQueue?(task: TaskDef): Promise<Omit<QueuePeek, "taskId" | "at">>;
 }
 
 /** 원본이 읽는 도중에 반쯤 쓰인 파일을 보지 않게, 옆에 쓰고 바꿔치기한다. */

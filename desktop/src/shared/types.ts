@@ -220,6 +220,29 @@ export interface Settings {
   discordWebhookUrl: string;
 }
 
+/**
+ * 열리기 전 대기열을 바깥에서 본 것 (롯데 TRACER). 쿠키 없이 상품 페이지를 받으면 서버가 박아 보내는 숨은 칸과,
+ * 상품 API 의 열리는 시각이다. 줄에 서지 않는다 — 줄에 서는 것은 대기 화면 스크립트가 순번 쿠키로 물을 때다.
+ */
+export interface QueuePeek {
+  taskId: string;
+  /** 읽은 때 (ms) */
+  at: number;
+  /** 대기 화면이 왔나 (isWait T). false 면 지금은 대기열이 없다. */
+  waiting: boolean;
+  /** 지금 줄에 선 사람 (waitCnt) */
+  count: number;
+  /** 한 번에 들여보내는 자리 (limitCnt) · 그 단위 시간(초) (session_time_out) */
+  limit: number;
+  session: number;
+  /** 대기 화면 스크립트와 같은 셈의 예상(초) = session ÷ limit × count. **실제보다 짧게 나온다** (2026-10-10). */
+  pageEta: number;
+  /** 열리는 시각 (ms). 모르거나 이미 열렸으면 null. */
+  opensAt: number | null;
+  /** 읽지 못했으면 그 까닭. 그때 나머지 칸은 0 · null. */
+  error: string | null;
+}
+
 /** 사이트 어댑터가 사이트 설정 말고 같이 보는 것. */
 export interface CommonSettings {
   webhook: string;
@@ -552,6 +575,12 @@ export interface AioApi {
   onRuntime(cb: (rt: TaskRuntime) => void): () => void;
   onLogs(cb: (lines: LogLine[]) => void): () => void;
   onProfile(cb: (p: Profile) => void): () => void;
+  /**
+   * 열리기 전 대기열 보기 (롯데). 켜면 main 이 10초마다 쿠키 없이 상품 페이지·상품 API 를 읽는다 — 줄에 서지 않는다.
+   * 태스크 창을 닫으면 저절로 꺼진다. → 지금까지 읽은 것 (오래된 것부터)
+   */
+  watchQueue(taskId: string, on: boolean): Promise<QueuePeek[]>;
+  onQueuePeek(cb: (peek: QueuePeek) => void): () => void;
   /** 태스크 목록이 바뀌었다 (고치기·지우기). 태스크 창이 제 태스크의 설정을 따라간다. */
   onTasks(cb: (tasks: TaskDef[]) => void): () => void;
 }

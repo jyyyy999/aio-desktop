@@ -291,6 +291,11 @@ label.inline { display: flex; align-items: center; gap: 6px; font-size: 12px; co
 .tw-cell.phase.paid .v { color: var(--go); }
 .tw-target { font-size: 12px; }
 .tw-link { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.tw-queue { display: flex; flex-direction: column; gap: 6px; font-size: 12px; padding-top: 6px; border-top: 1px dashed var(--line); }
+.tw-queue p { margin: 0; }
+.tw-rate {
+  width: 64px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; color: var(--text); padding: 3px 6px; font: inherit;
+}
 .tw-link p { margin: 0; }
 .tw-link-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .tw-link-url { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c3c9d6; }

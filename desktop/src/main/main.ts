@@ -8,7 +8,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { SITE_IDS, SITES, TIMING_BLANK } from "../shared/sites.js";
 import type {
-  LogLine, MonitorEntry, MonitorFound, MonitorInput, Profile, ProfilePatch, Settings, SiteId, SiteSettings, TaskDef, TaskRuntime,
+  LogLine, MonitorEntry, MonitorFound, MonitorInput, Profile, ProfilePatch, QueuePeek, Settings, SiteId, SiteSettings, TaskDef,
+  TaskRuntime,
 } from "../shared/types.js";
 import { MonitorManager } from "./monitorManager.js";
 import { MonitorStore } from "./monitorStore.js";
@@ -16,6 +17,7 @@ import * as supremeOrder from "./supremeOrder.js";
 import { SessionManager, type LoginWindows, type PinVault } from "./sessions.js";
 import { isDiscordWebhook, sendFound, sendTest } from "./webhook.js";
 import { ADAPTERS } from "./sites/index.js";
+import { QueueWatch } from "./queueWatch.js";
 import { TaskManager } from "./taskManager.js";
 
 /** 앱이 aio/desktop 에 있으니 롯데 원본은 옆집 aio/node, 네이버 원본은 ../naver/ts 에 있다. */
@@ -56,6 +58,8 @@ let manager: TaskManager;
 let sessions: SessionManager;
 /** 모니터 — 사지 않고 재고만 본다. 태스크와 따로 돈다. */
 let monitors: MonitorManager;
+/** 열리기 전 대기열 보기 — 태스크 창이 켠 동안만 돈다. */
+let queueWatch: QueueWatch | undefined;
 
 const RENDERER = join(__dirname, "..", "renderer", "index.html");
 
@@ -106,6 +110,8 @@ function openTaskWatch(id: string): void {
   taskWatches.set(id, watch);
   watch.on("closed", () => {
     if (taskWatches.get(id) === watch) taskWatches.delete(id);
+    // 대기열 보기는 태스크 창이 켠 것이다 — 창이 없으면 볼 사람도 없다.
+    queueWatch?.stop(id);
   });
 }
 
@@ -444,6 +450,7 @@ function createWindow(): void {
     // 메인 창이 닫히면 앱이 끝나는 것이라 모니터 창의 popupOpen 은 닫기 전 값으로 남긴다.
     sessions?.cancelAll();
     closeTaskWatches();
+    queueWatch?.stopAll();
     closeMonitorPopupsForQuit();
   });
 }
@@ -534,6 +541,7 @@ function registerIpc(): void {
   ipcMain.handle("aio:openTaskWatch", (_e, id: string) => openTaskWatch(id));
   ipcMain.handle("aio:closeTaskWatch", (_e, id: string) => closeTaskWatch(id));
   ipcMain.handle("aio:captureTaskWatch", (_e, id: string) => captureTaskWatch(id));
+  ipcMain.handle("aio:watchQueue", (_e, id: string, on: boolean) => queueWatch!.set(id, !!on));
   // 모니터 — 채널은 monitor:* (태스크와 가른다)
   const entryOf = (id: string) => {
     const e = monitors.list().find((one) => one.def.id === id);
@@ -576,6 +584,9 @@ app.whenReady().then(() => {
     toTaskWatch(rt.id, "aio:runtime", rt);
   });
   manager.on("log", queueLog);
+  // 열리기 전 대기열 보기 — 그 태스크의 태스크 창에만 보낸다 (켠 것도 그 창이다).
+  queueWatch = new QueueWatch((id) => manager.list().find((t) => t.id === id));
+  queueWatch.on("peek", (p: QueuePeek) => toTaskWatch(p.taskId, "aio:queuePeek", p));
   manager.on("tasks", (tasks: TaskDef[]) => {
     win?.webContents.send("aio:tasks", tasks);
     for (const id of [...taskWatches.keys()]) {

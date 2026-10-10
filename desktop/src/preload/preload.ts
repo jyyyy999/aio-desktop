@@ -3,7 +3,7 @@
  * sandbox 에서 돌므로 electron 말고는 들이지 않는다 (types 는 컴파일 때 지워진다).
  */
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import type { AioApi, LogLine, MonitorEntry, MonitorFound, Profile, TaskDef, TaskRuntime } from "../shared/types.js";
+import type { AioApi, LogLine, MonitorEntry, MonitorFound, Profile, QueuePeek, TaskDef, TaskRuntime } from "../shared/types.js";
 
 const call = (channel: string, ...args: unknown[]) => ipcRenderer.invoke(`aio:${channel}`, ...args);
 /** 모니터는 채널을 monitor:* 로 가른다. */
@@ -74,6 +74,8 @@ const api: AioApi = {
   openTaskWatch: (id) => call("openTaskWatch", id),
   closeTaskWatch: (id) => call("closeTaskWatch", id),
   captureTaskWatch: (id) => call("captureTaskWatch", id),
+  watchQueue: (id, on) => call("watchQueue", id, on),
+  onQueuePeek: (cb) => listen<QueuePeek>("aio:queuePeek", cb),
   onRuntime: (cb) => listen<TaskRuntime>("aio:runtime", cb),
   onLogs: (cb) => listen<LogLine[]>("aio:logs", cb),
   onProfile: (cb) => listen<Profile>("aio:profile", cb),

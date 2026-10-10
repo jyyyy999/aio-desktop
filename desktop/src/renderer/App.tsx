@@ -560,7 +560,11 @@ export function App() {
                             {uptime(rt, now)}
                             {t.monitorDurationMs > 0 && REPEATING_MODES.includes(t.mode) && ` / ${span(t.monitorDurationMs)}`}
                           </td>
-                          <td className="grow last" title={rt.lastLine}>{rt.lastLine}</td>
+                          {/* 원본이 제자리에서 고쳐 쓰는 상태 줄("품절 · 다음 확인 3초")이 있으면 그것을 — 롯데 원본은 판정이
+                              바뀔 때만 로그를 찍어서, 마지막 로그 줄만 보이면 감시가 멈춘 것처럼 보인다. */}
+                          <td className="grow last" title={live && rt.note ? `${rt.note}\n마지막 로그: ${rt.lastLine}` : rt.lastLine}>
+                            {live && rt.note ? <span className="muted">⟳ {rt.note}</span> : rt.lastLine}
+                          </td>
                           <td onClick={(e) => e.stopPropagation()}>
                             <div className="row-actions">
                               {rt.status === "stopping" ? (

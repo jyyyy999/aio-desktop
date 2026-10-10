@@ -27,3 +27,7 @@ build/
 *.key
 *.pem
 chrome-profile/
+# 시험이 만드는 크롬 프로필 (쿠키가 들어 있다) · 병합 스크립트가 남기는 백업
+chrome-profile-*/
+*.bak-*
+*.bak-dedupe

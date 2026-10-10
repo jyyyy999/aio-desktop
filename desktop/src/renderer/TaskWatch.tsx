@@ -7,7 +7,7 @@
  */
 import { useEffect, useState } from "react";
 import { MODE_LABEL, REPEATING_MODES, SITES, siteOfUrl } from "../shared/sites";
-import type { LogLine, Profile, SiteInfo, TaskDef, TaskPhase, TaskRuntime, TaskStatus } from "../shared/types";
+import type { LogLine, Profile, QueuePeek, SiteInfo, TaskDef, TaskPhase, TaskRuntime, TaskStatus } from "../shared/types";
 import {
   copyText, countdown, errText, idleRuntime, LIVE, LOGIN_LABEL, LogView, mergeLogs, SiteTag, span, STATUS_LABEL, targetText, uptime,
 } from "./App";
@@ -71,6 +71,124 @@ function linkChangeNote(task: TaskDef, status: TaskStatus, saved = false): strin
  * 상품 주소 — 보이고, 복사하고, 그 자리에서 고친다. 저장은 태스크 폼과 같은 saveTask 다 — 돌고 있으면 main 이
  * 바로 반영하거나(롯데) 다시 시작하고(네이버), 그 일을 태스크 로그에 적는다.
  */
+/**
+ * 줄이 빠지는 속도 어림(명/초)의 기본값. 2026-10-10 MEGA 30th — 09:54:26 에 앞 1,505명으로 서서 10:04 쯤 통과했다
+ * (평균 약 2.6명/초). 화면이 쓰는 셈(limitCnt 200 ÷ 30초 = 6.7명/초)보다 훨씬 느리고, 오픈이 가까울수록 더 느려졌다
+ * (09:31 4.2 → 09:54 3.5 → 09:58 0.7명/초 · 열린 뒤 3~5명/초).
+ */
+const DRAIN_DEFAULT = 2.5;
+/** 켜고 나서 크롬이 떠 상품 페이지(대기 화면)에 서기까지 어림(초). */
+const LAUNCH_SECONDS = 10;
+
+/** 10:00:05 */
+const hms = (ms: number): string => new Date(ms).toTimeString().slice(0, 8);
+
+/**
+ * 열리기 전 대기열 — 언제 태스크를 켤지 고르는 데 쓴다 (롯데). 켜면 main 이 10초마다 쿠키 없이 상품 페이지·상품 API 를
+ * 읽는다. 줄에 서지 않는다. 창을 닫으면 꺼진다.
+ *
+ * 켤 때의 셈: 통과한 자리는 30초쯤만 남는다 (10/10 측정) — 원본은 열리는 순간 띄워 둔 창을 새로 고치므로, 그보다
+ * 일찍 통과하면 다시 줄 맨 뒤로 간다. 그래서 "열리기 직전에 통과하거나 열린 뒤 통과" 가 되게 켠다:
+ *   권장 켜는 시각 = 열리는 시각 − (줄 ÷ 빠지는 속도) − 크롬 뜨는 시간
+ */
+function QueueBox({ task, live, now }: { task: TaskDef; live: boolean; now: number }) {
+  const [on, setOn] = useState(false);
+  const [peeks, setPeeks] = useState<QueuePeek[]>([]);
+  const [rate, setRate] = useState(DRAIN_DEFAULT);
+  const [fail, setFail] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!on) return;
+    let alive = true;
+    setFail(null);
+    aio.watchQueue(task.id, true).then((h) => alive && setPeeks(h)).catch((e) => alive && setFail(errText(e)));
+    const off = aio.onQueuePeek((p) => {
+      if (p.taskId === task.id) setPeeks((prev) => [...prev, p].slice(-90));
+    });
+    return () => {
+      alive = false;
+      off();
+      void aio.watchQueue(task.id, false).catch(() => undefined);
+    };
+  }, [on, task.id]);
+
+  const last = peeks.at(-1);
+  // 1분 전과 비교한 줄의 변화 — 길어지는지 줄어드는지.
+  const before = last ? [...peeks].reverse().find((p) => last.at - p.at >= 55_000 && !p.error) : undefined;
+  const trend = last && before && last.waiting ? last.count - before.count : null;
+  const wait = last?.waiting && rate > 0 ? Math.round(last.count / rate) : null;
+  const startAt = last?.opensAt && wait !== null ? last.opensAt - (wait + LAUNCH_SECONDS) * 1000 : null;
+
+  return (
+    <div className="tw-queue">
+      <div className="tw-link-row">
+        <span className="muted">열리기 전 대기열</span>
+        {on && last && !last.error && (
+          <span className="muted small">{hms(last.at)} 기준 · {Math.max(0, Math.round((now - last.at) / 1000))}초 전</span>
+        )}
+        <span className="grow" />
+        <button
+          type="button" className={`btn small ${on ? "ghost" : ""}`} onClick={() => setOn(!on)}
+          title="쿠키 없이 상품 페이지를 10초마다 읽습니다 — 줄에 서지 않습니다. 창을 닫으면 꺼집니다"
+        >{on ? "그만 보기" : "대기열 보기"}</button>
+      </div>
+      {fail && <p className="err small">{fail}</p>}
+      {on && !last && !fail && <p className="muted small">읽는 중…</p>}
+      {on && last?.error && <p className="err small">{last.error} — 10초 뒤 다시 읽습니다.</p>}
+      {on && last && !last.error && (
+        <>
+          <div className="tw-cells">
+            <div className="tw-cell">
+              <div className="l">줄</div>
+              <div className="v">
+                {last.waiting ? `${last.count.toLocaleString()}명` : "없음"}
+                {trend !== null && <span className={`small ${trend > 0 ? "warn-text" : "muted"}`}> · 1분에 {trend > 0 ? "+" : ""}{trend.toLocaleString()}</span>}
+              </div>
+            </div>
+            <div className="tw-cell">
+              <div className="l">열리는 시각</div>
+              <div className="v">
+                {last.opensAt ? <>{hms(last.opensAt)} <span className="muted small">· {countdown(last.opensAt - now)} 뒤</span></> : <span className="muted">모름</span>}
+              </div>
+            </div>
+            <div className="tw-cell">
+              <div className="l">지금 서면 기다릴 어림</div>
+              <div className="v">{wait !== null ? countdown(wait * 1000) : "—"}</div>
+            </div>
+            <div className={`tw-cell ${startAt !== null && startAt <= now ? "phase buying" : ""}`}>
+              <div className="l">권장 켜는 시각</div>
+              <div className="v">
+                {startAt === null ? "—"
+                  : startAt > now ? <>{hms(startAt)} <span className="muted small">· {countdown(startAt - now)} 뒤</span></>
+                  : <>지금 켜세요 <span className="muted small">· {hms(startAt)} 지남</span></>}
+              </div>
+            </div>
+          </div>
+          <div className="tw-link-row small">
+            <span className="muted">줄이 빠지는 속도 어림</span>
+            <input
+              className="tw-rate" type="number" min={0.5} step={0.5} value={rate}
+              onChange={(e) => setRate(Math.max(0.5, Number(e.target.value) || DRAIN_DEFAULT))}
+            />
+            <span className="muted">명/초 · 화면의 셈은 {last.waiting && last.limit ? `${(last.limit / Math.max(1, last.session)).toFixed(1)}명/초 (예상 ${last.pageEta}초)` : "—"}</span>
+          </div>
+          {!last.waiting && (
+            <p className="tw-hint live">지금은 대기열이 없습니다 — 서면 바로 상품 페이지가 뜹니다. 열리기 직전에 켜도 됩니다 (줄은 열리기 전에 갑자기 설 수 있으니 계속 보세요).</p>
+          )}
+          {last.waiting && !last.opensAt && (
+            <p className="tw-hint">열리는 시각을 모릅니다 (이미 판매 중이거나 상품 정보에 시각이 없습니다) — 권장 켜는 시각은 셈하지 않습니다.</p>
+          )}
+          {live && <p className="tw-hint live">태스크가 이미 돌고 있습니다 — 줄 선 자리는 위의 "대기열" 칸에 보입니다. 이 칸은 줄 전체입니다.</p>}
+          <p className="muted small">
+            통과한 자리는 30초쯤만 남습니다 — 일찍 통과하면 열릴 때 다시 줄 맨 뒤로 갑니다. 열리기 직전 30초 안이나 열린 뒤에 통과하게
+            켜세요. 오픈이 가까울수록 줄이 느리게 빠지니 어림 속도를 낮게 잡는 쪽이 안전합니다 (10/10: 09:31 초당 4.2명 → 09:58 0.7명).
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
 function LinkBox({ task, status }: { task: TaskDef; status: TaskStatus }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -291,6 +409,7 @@ export function TaskWatch({ taskId }: { taskId: string }) {
         </div>
         <div className="tw-target"><span className="muted">대상</span> {target}</div>
         <LinkBox key={task.id} task={task} status={rt.status} />
+        {task.site === "lotte" && <QueueBox key={`q-${task.id}`} task={task} live={live} now={now} />}
         {rt.note && <div className="tw-note" title="원본이 기다리는 동안 제자리에서 고쳐 쓰는 줄">{rt.note}</div>}
         {phase === "checkout" && (
           <p className="tw-hint">
