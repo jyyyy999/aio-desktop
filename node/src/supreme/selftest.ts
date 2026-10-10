@@ -515,6 +515,47 @@ async function colorFillTests(): Promise<void> {
 }
 
 /**
+ * 잡으면 바로 산다 — 걸린 상품이 있으면 남은 상품을 끝까지 판정하지 않고 그 자리에서 구매로 넘긴다 (2026-10-10).
+ */
+async function buyFastTests(): Promise<void> {
+  console.log("\n== 잡으면 바로 산다 ==");
+  const card = (handle: string, title: string) =>
+    normalizeCard({ handle, title, url: `/products/${handle}`, soldOut: false, image: "", price: 48 });
+  const listed = [card("box-logo-tee", "Box Logo Tee"), card("box-logo-hood", "Box Logo Hooded Sweatshirt")];
+  const order: string[] = [];
+  const fakeShop = {
+    lastResolveNote: "",
+    async list() {
+      return { mode: "html", status: 200, products: listed, hero: "", note: "" };
+    },
+    async pageState() {
+      return { url: "", title: "", blocked: false, challenge: false, text: "" };
+    },
+    async resolve(handle: string) {
+      order.push(`resolve:${handle}`);
+      return normalizeProduct({ ...RAW, handle, title: handle });
+    },
+  } as unknown as Shop;
+  const quiet = { note() {}, ok() {}, warn() {}, error() {}, step() {}, tick() {} };
+  const run = await watchLoop(
+    fakeShop,
+    rule({ include: ["box"], silentFirstScan: false }),
+    buyRule(),
+    { origin: "https://mock", collections: ["all"], dryRun: false, maxRounds: 1, maxBuys: 1, intervalMs: 0, jitterMs: 0 },
+    {
+      async onEvents(events) {
+        order.push(`buy:${events.map((e) => e.product.handle).join(",")}`);
+      },
+    },
+    quiet,
+    () => false,
+  );
+  ok("첫 상품을 잡자마자 산다", order[0] === "resolve:box-logo-tee" && order[1] === "buy:box-logo-tee", order.join(" → "));
+  ok("산 뒤에는 남은 상품을 판정하지 않는다(페이지도 안 받는다)", !order.includes("resolve:box-logo-hood"), order.join(" → "));
+  ok("한 번 사고 멈춘다", run.state.buys === 1, run.reason);
+}
+
+/**
  * HTML 폴백 상점 — 진짜 슈프림이 이 모양이다 (products.json 이 막혀 있다).
  * variant 가 없으므로 감시가 **발견**을 내려면 /products/<handle>.js 로 해석해야 한다.
  */
@@ -577,6 +618,7 @@ async function main(): Promise<void> {
   console.log("== 슈프림 시험 ==");
   pureTests();
   await colorFillTests();
+  await buyFastTests();
   if (process.argv.includes("--browser")) {
     await browserTests();
     await htmlFallbackTests();

@@ -246,29 +246,27 @@ export async function watchLoop(
       if (opts.dryRun) {
         // 모니터의 발견 줄 — 첫 묶음이 상품 주소여야 한다 (어댑터 monitorSignal.found).
         log.ok(LINES.foundDry(`${opts.origin}${product.url}`));
-      } else {
-        log.ok(LINES.found(what));
+        alive.push({ event: here, decision });
+        continue;
       }
-      alive.push({ event: here, decision });
+
+      // 3) **잡으면 바로 산다.** 남은 상품을 끝까지 판정한 뒤에 사면(후보마다 상품 페이지를 받을 수 있다)
+      //    그만큼 늦게 담는다 — 드랍에서는 그 몇 초에 품절이 난다 (2026-10-10 요청).
+      log.ok(LINES.found(what));
+      await hooks.onEvents([here], [{ event: here, decision }]);
+      state.buys++;
+      if (opts.stopOnFound || state.buys >= opts.maxBuys || shouldStop()) {
+        hooks.onRound?.({ round: state.round, products: state.products, events: state.events, ms });
+        log.note(LINES.stopped(`구매를 ${state.buys}번 시도해 멈췄습니다`));
+        return { state, ok: true, reason: `구매 ${state.buys}회` };
+      }
     }
 
     if (alive.length) {
-      if (opts.dryRun) {
-        hooks.onRound?.({ round: state.round, products: state.products, events: state.events, ms });
-        if (opts.stopOnFound) {
-          log.note(LINES.stopped("드라이런에서 발견해 멈췄습니다"));
-          return { state, ok: true, reason: "발견(드라이런)" };
-        }
-      } else {
-        await hooks.onEvents(
-          alive.map((a) => a.event),
-          alive,
-        );
-        state.buys++;
-        if (opts.stopOnFound || state.buys >= opts.maxBuys) {
-          log.note(LINES.stopped(`구매를 ${state.buys}번 시도해 멈췄습니다`));
-          return { state, ok: true, reason: `구매 ${state.buys}회` };
-        }
+      hooks.onRound?.({ round: state.round, products: state.products, events: state.events, ms });
+      if (opts.stopOnFound) {
+        log.note(LINES.stopped("드라이런에서 발견해 멈췄습니다"));
+        return { state, ok: true, reason: "발견(드라이런)" };
       }
     }
     hooks.onRound?.({ round: state.round, products: state.products, events: state.events, ms });
