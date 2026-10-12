@@ -12,7 +12,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BASE, nextDropTime } from "./config.js";
+import { BASE, nextDropTime, sharedCookies } from "./config.js";
 import { formatQueueLine, looksLikeQueue, parseQueue, queueScript, waitThroughQueue } from "./queue.js";
 import { isCheckpointUrl, passCheckpoint, submitCheckpointScript } from "./checkpoint.js";
 import { LINES, LINE_PATTERNS } from "./lines.js";
@@ -210,6 +210,9 @@ function pureTests(): void {
   ok("probeScript 가 토큰 칸을 본다", probeScript().includes("h-captcha-response"));
   ok("focusScript 가 hcaptcha 를 찾는다", focusScript("hide").includes("hcaptcha.com"));
   ok("다시 걸 때는 사람의 스크롤을 되돌리지 않는다(첫 번과 다르게 본다)", focusScript("hide", "x", true) !== focusScript("hide", "x", false));
+  // 한 프로필로 여러 태스크 — 장바구니·체크아웃·대기열 쿠키는 태스크마다 따로 (심기 전에 뺀다).
+  const shared = sharedCookies("cf_clearance=abc; cart=c1%3Fkey%3Dz; cart_sig=s; cart_ts=1; checkout_session_token__cn__x=t; _checkout_queue_token=q; _shopify_y=y; localization=KR");
+  ok("프로필 쿠키에서 장바구니·체크아웃·대기열 쿠키를 뺀다", shared === "cf_clearance=abc; _shopify_y=y; localization=KR", shared);
   ok("체크포인트 주소를 알아본다", isCheckpointUrl("https://shop.supreme.com/checkpoint?return_to=https%3A%2F%2Fshop.supreme.com%2Fcheckout"));
   ok("체크아웃·상품 주소는 체크포인트가 아니다", !isCheckpointUrl("https://shop.supreme.com/checkout") && !isCheckpointUrl("https://shop.supreme.com/products/checkpoint-tee"));
   ok("체크포인트는 토큰이 든 폼의 버튼을 누른다", submitCheckpointScript().includes("h-captcha-response") && submitCheckpointScript().includes("requestSubmit"));

@@ -184,8 +184,9 @@ export const SITES: Record<SiteId, SiteSpec> = {
     modes: ["watch", "once", "buy", "dry-run", "status", "drop"],
     // 재고 조회·담기·결제가 전부 공개 스토어프론트에서 된다 (게스트 체크아웃).
     loginOptional: ["watch", "once", "buy", "dry-run", "status", "drop"],
-    // 한 프로필(사람 확인 통과 쿠키)로 여러 태스크가 동시에 결제하면 같은 장바구니를 밟는다.
-    oneTaskPerProfile: true,
+    // 한 프로필(사람 확인 통과 쿠키)로 여러 태스크를 돌린다 (2026-10-12). 크롬 프로필은 태스크마다 따로고,
+    // 장바구니·체크아웃·대기열 쿠키는 원본이 심기 전에 빼서(config.ts sharedCookies) 태스크마다 장바구니가 따로다.
+    oneTaskPerProfile: false,
     monitors: true,
     payProfileSite: null,
   },

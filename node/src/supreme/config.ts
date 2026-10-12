@@ -311,13 +311,32 @@ export function saveState(state: State): void {
 }
 
 /** 빌려온 쿠키 (사람이 로그인 창에서 통과한 세션). 환경변수 → 설정 → 프로필 파일 순서다. */
+/**
+ * 태스크마다 **따로** 가져야 하는 쿠키 — 장바구니 · 체크아웃 · 체크아웃 대기열.
+ * 프로필 쿠키(로그인 창이 모은 한 줄)에 이것들이 들어 있으면, 같은 프로필로 도는 태스크들이 **한 장바구니**를
+ * 같이 쓴다 — 한쪽이 장바구니를 비우면 다른 쪽 것도 비고, 남의 상품이 같이 결제된다. 심기 전에 뺀다 (2026-10-12).
+ * 사람 확인 통과(cf_clearance 등)·방문 쿠키는 그대로 나눠 쓴다.
+ */
+const PER_TASK_COOKIE = /^(cart(_[a-z]+)?|checkout(_.*)?|_checkout_queue_.*)$/i;
+
+export function sharedCookies(raw: string): string {
+  return String(raw || "")
+    .split(";")
+    .map((part) => part.trim())
+    .filter((part) => {
+      const at = part.indexOf("=");
+      return at > 0 && !PER_TASK_COOKIE.test(part.slice(0, at).trim());
+    })
+    .join("; ");
+}
+
 export function cookieOf(cfg: SupremeConfig): string {
   const env = (process.env["SUPREME_COOKIE"] || "").trim();
-  if (env) return env;
+  if (env) return sharedCookies(env);
   const own = (cfg.cookie || "").trim();
-  if (own) return own;
+  if (own) return sharedCookies(own);
   try {
-    return readFileSync(join(BASE, "supreme-cookie.txt"), "utf-8").trim();
+    return sharedCookies(readFileSync(join(BASE, "supreme-cookie.txt"), "utf-8").trim());
   } catch {
     return "";
   }
