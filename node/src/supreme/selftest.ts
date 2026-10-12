@@ -775,6 +775,37 @@ async function dropTests(): Promise<void> {
 }
 
 /**
+ * **지금 구매(--keys … --once)** — 크롬은 감시와 나란히 뜨고(LazyBrowser), 걸리면 그 크롬으로 담아 결제까지.
+ * 원본 CLI 를 임시 집으로 따로 띄운다.
+ */
+async function onceBuyTests(): Promise<void> {
+  console.log("\n== 지금 구매 (크롬은 감시와 나란히) ==");
+  const mock = await startMockShop({ checkpoint: true, autoSolveCaptcha: true });
+  const home = mkdtempSync(join(tmpdir(), "supreme-once-"));
+  try {
+    writeFileSync(join(home, "supreme_config.json"), JSON.stringify({
+      origin: mock.origin,
+      browser: { headless: true, offscreen: false },
+      buy: { retry_attempts: 1 },
+      captcha: { timeout_ms: 30_000 },
+      profile: {
+        email: "buyer@example.com", first_name: "Gil", last_name: "Hong", address1: "1-2-3 Teheran-ro", city: "Seoul",
+        state: "Seoul", zip: "06134", phone: "01012345678", country: "KR",
+        card_number: "4242424242424242", card_expiry: "12/30", card_cvv: "123", card_holder: "GIL HONG",
+      },
+    }), "utf-8");
+    const { code, out } = await runCli(["--keys", "#all +box +logo", "--size", "Large", "--once"], home, 120_000);
+    const tail = out.trim().split("\n").slice(-5).join(" / ");
+    ok("지금 구매가 끝까지 돈다", code === 0, `코드 ${code} · ${tail}`);
+    ok("White/Large(50013)를 담는다", mock.cart.length === 1 && mock.cart[0]?.variantId === "50013", JSON.stringify(mock.cart));
+    ok("결제까지 간다", mock.hits.includes("GET /thank_you") && /결제 완료|주문 완료/.test(out), tail);
+  } finally {
+    await mock.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+/**
  * 색 보완 — 목록 카드에 색이 빠져 와도(카드가 늦게 그려진다) `+camo` 가 걸려야 한다.
  * 크롬 없이 가짜 Shop 으로 감시 한 바퀴를 돈다: 후보만 상품 페이지 이름으로 보완하고, 나머지는 요청하지 않는다.
  */
@@ -972,6 +1003,7 @@ async function main(): Promise<void> {
     await htmlFallbackTests();
     await checkpointTests();
     await dropTests();
+    await onceBuyTests();
   } else console.log("\n(크롬 왕복 시험은 --browser 를 붙이면 돕니다)");
 
   console.log(`\n== 결과: ${passed}개 통과 · ${failures.length}개 실패 ==`);

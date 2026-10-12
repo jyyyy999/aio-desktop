@@ -311,26 +311,78 @@ async function openBrowser(cfg: SupremeConfig): Promise<SupremeBrowser> {
 }
 
 /** 페이지가 홈(스토어프론트 오리진)에 있게 한다 — 페이지 안 fetch 는 같은 오리진에서만 뜻이 있다. */
-async function shopOf(
-  browser: SupremeBrowser,
-  cfg: SupremeConfig,
-  prefetch?: Promise<Awaited<ReturnType<typeof fetchPageProducts>>>,
-): Promise<Shop> {
-  // **뜨자마자 가장 가벼운 슈프림 주소로 가 둔다** — 담기·장바구니 fetch 는 슈프림 주소의 페이지에서만 된다.
-  // 홈(/)은 /pages/shop 으로 넘어가며 1~2초, /robots.txt 는 약 0.4초 (2026-10-10 실측).
+/**
+ * **뜨자마자 가장 가벼운 슈프림 주소로 가 둔다** — 담기·장바구니 fetch 는 슈프림 주소의 페이지에서만 된다.
+ * 홈(/)은 /pages/shop 으로 넘어가며 1~2초, /robots.txt 는 약 0.4초 (2026-10-10 실측).
+ */
+async function warmUp(browser: SupremeBrowser, cfg: SupremeConfig): Promise<void> {
   try {
     if (!(await browser.url()).startsWith(cfg.origin)) await browser.goto(`${cfg.origin}/robots.txt`);
   } catch {
-    /* 못 가면 처음 쓸 때 홈으로 간다 (아래) */
+    /* 못 가면 처음 쓸 때 홈으로 간다 (shopOf) */
   }
+}
+
+/**
+ * 크롬을 **필요할 때** 띄운다 (2026-10-12). 목록은 Node 에서 받으니 감시는 크롬 없이 곧바로 시작한다.
+ *   살 것이면 start() 로 지금 띄우기 시작해 감시와 나란히 뜬다 — 담을 때 기다리는 것은 남은 몇 초뿐.
+ *   드라이런은 크롬 안 fetch 가 필요할 때(Node 가 막혔을 때)가 아니면 끝까지 띄우지 않는다.
+ */
+class LazyBrowser {
+  private launching: Promise<SupremeBrowser> | null = null;
+  private ready: SupremeBrowser | null = null;
+
+  constructor(private readonly cfg: SupremeConfig) {}
+
+  get(): Promise<SupremeBrowser> {
+    this.launching ??= openBrowser(this.cfg).then(async (browser) => {
+      await warmUp(browser, this.cfg);
+      this.ready = browser;
+      return browser;
+    });
+    return this.launching;
+  }
+
+  /** 지금 띄우기 시작한다 (기다리지 않는다). 실패는 실제로 쓸 때(get) 던진다. */
+  start(): void {
+    this.get().catch(() => undefined);
+  }
+
+  /** 떠 있으면 그 크롬 (아직이면 null) */
+  now(): SupremeBrowser | null {
+    return this.ready;
+  }
+
+  cancelled(): boolean {
+    return this.ready?.cancelled() ?? false;
+  }
+
+  async quit(): Promise<void> {
+    if (!this.launching) return;
+    try {
+      await (await this.launching).quit();
+    } catch {
+      /* 못 떴으면 닫을 것도 없다 */
+    }
+  }
+}
+
+async function shopOf(
+  browser: SupremeBrowser | LazyBrowser,
+  cfg: SupremeConfig,
+  prefetch?: Promise<Awaited<ReturnType<typeof fetchPageProducts>>>,
+): Promise<Shop> {
+  const get = browser instanceof LazyBrowser ? () => browser.get() : async () => browser;
+  if (!(browser instanceof LazyBrowser)) await warmUp(browser, cfg);
   return new Shop(
     async (script: string) => {
-      const here = await browser.url();
-      if (!here.startsWith(cfg.origin)) await browser.goto(cfg.origin);
-      return browser.run(script);
+      const b = await get();
+      const here = await b.url();
+      if (!here.startsWith(cfg.origin)) await b.goto(cfg.origin);
+      return b.run(script);
     },
     // 컬렉션 주소로 **먼저 이동**한다 — 홈을 긁으면 신상품 36개만 보인다 (2026-10-08).
-    { goto: (url: string) => browser.goto(url), origin: cfg.origin },
+    { goto: async (url: string) => (await get()).goto(url), origin: cfg.origin },
     // 목록은 크롬 없이 Node 에서 받는다 (막히면 크롬 안 fetch 로). 첫 바퀴는 크롬이 뜨는 동안 받아 둔 것.
     { direct: true, cookie: cookieOf(cfg), ...(prefetch ? { prefetch } : {}) },
   );
@@ -411,8 +463,10 @@ async function buyProduct(
 async function runWatch(cfg: SupremeConfig, state: State, args: Args): Promise<void> {
   const dryRun = args.dryRun;
   const early = prefetchList(cfg);
-  const browser = await openBrowser(cfg);
-  const shop = await shopOf(browser, cfg, early);
+  // 크롬은 감시와 나란히 띄운다(살 때만 기다린다). 드라이런은 필요할 때까지 안 띄운다.
+  const browsers = new LazyBrowser(cfg);
+  if (!dryRun) browsers.start();
+  const shop = await shopOf(browsers, cfg, early);
   const rule = monitorRule(cfg);
   const buy = buyRule(cfg);
   const options = watchOptions(cfg, dryRun, cfg.buy.max_buys_per_run);
@@ -422,7 +476,9 @@ async function runWatch(cfg: SupremeConfig, state: State, args: Args): Promise<v
   UI.banner("SUPREME · shop.supreme.com", [
     dryRun ? "[dry-run] 사지 않고 봅니다" : "재고가 열리면 담아서 결제까지 갑니다",
     `확인 간격 ${cfg.check_interval_ms / 1000}초 · 컬렉션 ${cfg.collections.join(", ")}`,
-    cfg.browser.offscreen ? "크롬은 화면 밖에서 돕니다 — 진행 상황은 여기 콘솔에 나옵니다" : "크롬 창이 보입니다",
+    dryRun
+      ? "목록은 크롬 없이 받습니다 — 드라이런은 크롬을 띄우지 않습니다"
+      : cfg.browser.offscreen ? "크롬은 화면 밖에서 돕니다 — 진행 상황은 여기 콘솔에 나옵니다" : "크롬 창이 보입니다",
     "캡차가 뜨면 캡차만 보이는 창을 띄웁니다 — 사람이 풀면 이어서 진행합니다",
     webhookOf(cfg) ? "알림: 디스코드" : "알림 없음 (웹훅이 없습니다)",
     dryRun && !cookieOf(cfg) ? "쿠키 없이 공개 목록만 봅니다" : null,
@@ -448,7 +504,7 @@ async function runWatch(cfg: SupremeConfig, state: State, args: Args): Promise<v
             log.info(`상한가(${target.max_price})를 넘어 담지 않습니다 — ${describe(event.product, variant)}`);
             continue;
           }
-          const ok = await buyProduct(browser, shop, cfg, state, event.product, variant, target, buy.quantity);
+          const ok = await buyProduct(await browsers.get(), shop, cfg, state, event.product, variant, target, buy.quantity);
           if (ok) {
             bought++;
             if (cfg.buy.stop_after_success) {
@@ -468,6 +524,7 @@ async function runWatch(cfg: SupremeConfig, state: State, args: Args): Promise<v
         sayStar(LINES.blocked(state2.text.slice(0, 80)));
         await notifyBlocked(cfg, state2.text.slice(0, 200));
         // 창을 사람에게 보여 주고, 사람이 통과하면 이어서 본다.
+        const browser = await browsers.get();
         await browser.showToHuman("사람 확인(봇 차단) 화면입니다 — 창에서 통과해 주세요");
         const waited = Date.now();
         while (Date.now() - waited < 300_000) {
@@ -489,32 +546,36 @@ async function runWatch(cfg: SupremeConfig, state: State, args: Args): Promise<v
       },
     };
 
-    const result = await watchLoop(shop, rule, buy, options, hooks, watchLog(), () => stop || browser.cancelled());
+    const result = await watchLoop(shop, rule, buy, options, hooks, watchLog(), () => stop || browsers.cancelled());
     if (!result.ok) {
       log.error(LINES.failed("감시", result.reason));
       process.exitCode = 1;
     }
   } finally {
     saveState(state);
-    await browser.quit();
+    await browsers.quit();
   }
 }
 
 /** 한 바퀴만 보고 끝 (--once · --dry-run 단독) */
 async function runOnce(cfg: SupremeConfig, state: State, dryRun: boolean): Promise<void> {
   const early = prefetchList(cfg);
-  const browser = await openBrowser(cfg);
-  const shop = await shopOf(browser, cfg, early);
+  const browsers = new LazyBrowser(cfg);
+  if (!dryRun) browsers.start();
+  const shop = await shopOf(browsers, cfg, early);
+  // **실행할 때마다 장바구니를 비운다** (지난 판의 미끼·실패한 담기가 남아 함께 결제되지 않게).
+  // 크롬이 뜨는 대로 하고, 목록 판정은 기다리지 않는다 — 담기 직전에만 이것을 기다린다. 드라이런은 손대지 않는다.
+  const cartCleared = !dryRun && cfg.buy.clear_cart_first
+    ? (async () => {
+        const before = await shop.cart();
+        if (before.count > 0) {
+          const cleared = await shop.clearCart();
+          if (cleared.ok) log.info(`장바구니를 비웠습니다 (${before.count}개 → 0개)`);
+          else log.warn(`장바구니를 못 비웠습니다: ${cleared.reason}`);
+        }
+      })().catch((e: unknown) => log.warn(`장바구니를 못 비웠습니다: ${e instanceof Error ? e.message : String(e)}`))
+    : Promise.resolve();
   try {
-    // **실행할 때마다 장바구니를 비운다** (지난 판의 미끼·실패한 담기가 남아 함께 결제되지 않게).
-    if (cfg.buy.clear_cart_first) {
-      const before = await shop.cart();
-      if (before.count > 0) {
-        const cleared = await shop.clearCart();
-        if (cleared.ok) log.info(`장바구니를 비웠습니다 (${before.count}개 → 0개)`);
-        else log.warn(`장바구니를 못 비웠습니다: ${cleared.reason}`);
-      }
-    }
     await watchLoop(
       shop,
       monitorRule(cfg),
@@ -532,14 +593,15 @@ async function runOnce(cfg: SupremeConfig, state: State, dryRun: boolean): Promi
               continue;
             }
             const target = targetFor(cfg, event.product.url, 0);
-            await buyProduct(browser, shop, cfg, state, event.product, variant, target, cfg.buy.quantity);
+            await cartCleared;
+            await buyProduct(await browsers.get(), shop, cfg, state, event.product, variant, target, cfg.buy.quantity);
             break; // 한 바퀴에서는 하나만
           }
         },
         async onBlocked(state2: { url: string; text: string }) {
           sayStar(LINES.blocked(state2.text.slice(0, 80)));
           await notifyBlocked(cfg, state2.text.slice(0, 200));
-          await browser.showToHuman("사람 확인(봇 차단) 화면입니다 — 창에서 통과해 주세요");
+          await (await browsers.get()).showToHuman("사람 확인(봇 차단) 화면입니다 — 창에서 통과해 주세요");
         },
         onRound(info: { round: number }) {
           state.rounds = info.round;
@@ -548,11 +610,11 @@ async function runOnce(cfg: SupremeConfig, state: State, dryRun: boolean): Promi
         },
       },
       watchLog(),
-      () => browser.cancelled(),
+      () => browsers.cancelled(),
     );
   } finally {
     if (!dryRun) saveState(state);
-    await browser.quit();
+    await browsers.quit();
   }
 }
 
