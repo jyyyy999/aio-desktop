@@ -45,6 +45,50 @@ const hasAny = (hay: string, needles: string[]): boolean => {
   return needles.some((n) => t.includes(lower(n)));
 };
 
+/** 낱말로 쪼갠다 — 악센트·® 를 떼고 글자·숫자만 ("GORE-TEX N-2B" → gore tex n 2b, "Appliqué" → applique). */
+export function wordsOf(s: string): string[] {
+  return lower(String(s || ""))
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .split(/[^a-z0-9가-힣]+/)
+    .filter(Boolean);
+}
+
+/**
+ * 키워드가 이름에 **낱말로** 들어 있나 — 키워드의 낱말마다 이름의 어떤 낱말의 **앞부분**이어야 한다.
+ * "sweat" → Sweatshirt 는 되고, "red" → Predator · "tan" → Stand 는 안 된다
+ * (2026-10-12 실사이트 225개로 확인: 글자 일부로 찾았더니 +red 가 Predator Camo 9개, +tan 이 Stand Collar 재킷에 걸렸다).
+ */
+export function hasKeyword(hay: string, needle: string): boolean {
+  const have = wordsOf(hay);
+  const want = wordsOf(needle);
+  return want.length > 0 && want.every((w) => have.some((h) => h.startsWith(w)));
+}
+
+/** 색이 맞나 — 색 이름과 **낱말 단위로** 견준다 ("grey" → Heather Grey 는 맞고, "red" → Predator Camo 는 아니다). */
+export function colorMatches(color: string, want: string): boolean {
+  const have = wordsOf(color);
+  const w = wordsOf(want);
+  return w.length > 0 && w.every((x) => have.includes(x));
+}
+
+/** 색이 **정확히** 같나 ("Black" = black, "Washed Black" ≠ black) — 여럿 걸리면 이것을 먼저 산다. */
+export function colorExact(color: string, want: string): boolean {
+  const a = wordsOf(color).join(" ");
+  return !!a && a === wordsOf(want).join(" ");
+}
+
+/**
+ * 상품의 색 — products-json 의 color(withPageColor 가 넣는다), 없으면 이름 끝의 " - 색"
+ * (목록 카드 alt 가 "이름 - 색" 꼴이다). 색이 variant 로 갈리는 상품은 "" (variant 가 고른다).
+ */
+export function productColor(product: Product): string {
+  if (product.color?.trim()) return product.color.trim();
+  if (product.variants.some((v) => v.color.trim())) return "";
+  const at = product.title.lastIndexOf(" - ");
+  return at > 0 ? product.title.slice(at + 3).trim() : "";
+}
+
 export function buildSnapshot(products: Product[], at = Date.now()): Snapshot {
   const byHandle = new Map<string, { product: Product; variants: Map<string, Variant> }>();
   for (const product of products) {
@@ -99,13 +143,18 @@ export function diff(prev: Snapshot | null, products: Product[], rule: MonitorRu
 export function matchProduct(product: Product, rule: MonitorRule): { ok: boolean; reason: string } {
   const title = `${product.title} ${product.type} ${product.tags}`;
   if (rule.exclude.length) {
-    const hit = rule.exclude.find((k) => lower(title).includes(lower(k)));
+    const hit = rule.exclude.find((k) => hasKeyword(title, k));
     if (hit) return { ok: false, reason: `제외 키워드(${hit})` };
   }
   // 포함은 **전부** 있어야 한다 — "+box +logo" 는 box 와 logo 가 둘 다 들어간 것이어야 한다.
   // (하나라도 있으면 통과로 두면 "+gore +tex" 가 gore 만 들어간 것도 담는다 — 2026-10-08 에 고쳤다.)
-  const absent = rule.include.find((needle) => !lower(title).includes(lower(needle)));
+  const absent = rule.include.find((needle) => !hasKeyword(title, needle));
   if (absent) return { ok: false, reason: `포함 키워드 불일치(${absent} 없음)` };
+  // 색은 **상품의 색**과 낱말로 견준다 (이름 전체의 글자 일부로 찾으면 red 가 Predator 에 걸린다).
+  if (rule.colors.length) {
+    const color = productColor(product);
+    if (color && !rule.colors.some((c) => colorMatches(color, c))) return { ok: false, reason: `색상 불일치(${color})` };
+  }
   if (rule.categories.length && !hasAny(`${product.type} ${product.tags}`, rule.categories)) {
     return { ok: false, reason: "카테고리 불일치" };
   }
@@ -123,8 +172,8 @@ export function matchProduct(product: Product, rule: MonitorRule): { ok: boolean
  */
 export function needsFullName(product: Product, rule: MonitorRule): boolean {
   if (!product.partial || rule.include.length < 2) return false;
-  const text = lower(`${product.title} ${product.type} ${product.tags}`);
-  const hits = rule.include.filter((needle) => text.includes(lower(needle))).length;
+  const text = `${product.title} ${product.type} ${product.tags}`;
+  const hits = rule.include.filter((needle) => hasKeyword(text, needle)).length;
   if (hits === 0 || hits === rule.include.length) return false;
   return matchProduct(product, { ...rule, include: [] }).ok;
 }
@@ -177,7 +226,7 @@ export const sizeEquals = (a: string, b: string): boolean => {
  * 사이즈뿐이고, 색은 상품 이름(포함 키워드)에서 이미 걸렀다. 막으면 색을 적은 태스크가 아무것도 못 산다.
  */
 const colorOk = (v: Variant, rule: MonitorRule): boolean =>
-  !rule.colors.length || !v.color.trim() || rule.colors.some((c) => lower(v.color).includes(lower(c)));
+  !rule.colors.length || !v.color.trim() || rule.colors.some((c) => colorMatches(v.color, c));
 
 /** variant 단위 필터 (색상·사이즈) */
 export function matchVariant(variant: Variant | null, rule: MonitorRule): { ok: boolean; reason: string } {

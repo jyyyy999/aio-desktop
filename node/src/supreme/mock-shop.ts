@@ -165,6 +165,46 @@ function checkpointHtml(returnTo: string, error = ""): string {
   );
 }
 
+/**
+ * **한 화면 체크아웃** (슈프림의 실제 모양 — 2026-10-08 주문창 덤프): 연락·배송·배송방법·카드가 한 페이지,
+ * 결제 버튼(#checkout-pay-button "process payment")은 처음부터 있고 카드칸(iframe)은 늦게 그려진다.
+ * 할인코드 칸의 "Submit" 버튼도 있다 — 이걸 "계속" 으로 누르면 안 된다 (POST /discount 로 남는다).
+ */
+function onePageHtml(): string {
+  return html(
+    "Checkout - Supreme",
+    `<h2>Contact</h2>
+<form id="checkout" onsubmit="return false">
+  <input id="email" name="email" type="email" autocomplete="email" />
+  <h2>Delivery</h2>
+  <input id="lastName" name="lastName" autocomplete="family-name" />
+  <input id="firstName" name="firstName" autocomplete="given-name" />
+  <input id="postalCode" name="postalCode" autocomplete="postal-code" />
+  <input id="city" name="city" autocomplete="address-level2" />
+  <input id="address1" name="address1" autocomplete="address-line1" />
+  <input id="phone" name="phone" type="tel" autocomplete="tel" />
+  <select id="countryCode" name="countryCode" autocomplete="country"><option value="KR">대한민국</option></select>
+  <h2>Shipping method</h2>
+  <div id="rates"></div>
+  <h2>Credit card information</h2>
+  <div id="card"></div>
+  <button id="checkout-pay-button" type="submit">process payment</button>
+</form>
+<form id="discount" method="post" action="/discount"><input name="reductions" /><button type="submit">Submit</button></form>
+<script>
+  // 카드칸·배송방법은 늦게 그려진다 (실제처럼).
+  setTimeout(() => {
+    document.getElementById("rates").innerHTML = '<label class="rate"><input type="radio" name="shipping_method" data-price="0" checked /> 무료 배송</label>';
+    document.getElementById("card").innerHTML =
+      '<iframe name="card-fields-number-x1" src="/card-field?f=number" width="320" height="46" title="Card number"></iframe>' +
+      '<iframe name="card-fields-expiry-x2" src="/card-field?f=expiry" width="150" height="46" title="Expiration date (MM/YY)"></iframe>' +
+      '<iframe name="card-fields-verification_value-x3" src="/card-field?f=cvv" width="150" height="46" title="Security code"></iframe>';
+  }, 1200);
+  document.getElementById("checkout-pay-button").addEventListener("click", () => { location.href = "/thank_you"; });
+</script>`,
+  );
+}
+
 function paymentHtml(): string {
   return html(
     "Payment - Supreme",
@@ -256,6 +296,8 @@ export async function startMockShop(
     queueMs?: number;
     /** 캡차가 스스로 풀린다 — 사람 흉내를 넣을 수 없는 시험(CLI 를 따로 띄울 때)용 */
     autoSolveCaptcha?: boolean;
+    /** 한 화면 체크아웃(슈프림의 실제 모양) — 결제 버튼은 처음부터, 카드칸은 늦게 */
+    onePage?: boolean;
   } = {},
 ): Promise<MockShop> {
   const hits: string[] = [];
@@ -417,12 +459,12 @@ export async function startMockShop(
         return;
       }
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "set-cookie": "mock_queue=passed; Path=/" });
-      res.end(checkoutHtml());
+      res.end(options.onePage ? onePageHtml() : checkoutHtml());
       return;
     }
     if (path === "/checkout") {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(checkoutHtml());
+      res.end(options.onePage ? onePageHtml() : checkoutHtml());
       return;
     }
     if (path === "/checkout/payment") {

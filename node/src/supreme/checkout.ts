@@ -15,7 +15,7 @@
 import { type CaptchaOptions, clearCaptchaIfAny, type CaptchaWindowHost, probeCaptcha } from "./captcha-window.js";
 import { isCheckpointUrl, passCheckpoint } from "./checkpoint.js";
 import { log } from "./log.js";
-import { inCheckoutFlow } from "./queue.js";
+import { inCheckoutFlow, waitThroughQueue } from "./queue.js";
 import {
   agreementsScript,
   billingSameScript,
@@ -94,6 +94,8 @@ export interface BuyOptions {
   shippingPrefer: "first" | "cheapest";
   /** 방금 담기에 성공했다 — 체크아웃 전에 장바구니를 다시 묻지 않는다 (요청 하나 아끼기) */
   cartKnown?: boolean;
+  /** 체크아웃 대기열에서 이만큼 기다린다 (새로 고치지 않고) */
+  queueTimeoutMs?: number;
 }
 
 export const DEFAULT_BUY_OPTIONS: BuyOptions = {
@@ -255,9 +257,28 @@ export async function runCheckout(
       (v) => formShown(v as StageReport | null) || isCheckpointUrl((v as StageReport | null)?.url),
       { timeoutMs: buy.stepTimeoutMs, intervalMs: 150, note: "체크아웃 화면" },
     )) as StageReport | null;
+  // 0-1) **대기열 · 체크포인트를 지나 주문서까지** — 새로 고치지 않는다(대기열 자리를 잃지 않게).
+  //      지켜보기·지금 구매도 드랍처럼 대기열을 탄다 (2026-10-12: 예전에는 주문서만 45초 기다리다 실패하고
+  //      /checkout 을 다시 열어 자리를 잃었다). 체크포인트는 사람이 풀고 버튼은 대신 누른다.
+  const through = await waitThroughQueue(host, {
+    url: `${origin}/checkout`,
+    timeoutMs: buy.queueTimeoutMs ?? 10 * 60_000,
+    idleTimeoutMs: buy.stepTimeoutMs,
+    onCheckpoint: async () => {
+      const passed = await passCheckpoint(host, { captcha: captchaOpts });
+      steps.push({ ok: passed.ok, step: "checkpoint", reason: passed.reason });
+      return passed.ok;
+    },
+  });
+  if (through.reason === "대기열 통과") steps.push({ ok: true, step: "queue", reason: `대기열 통과 (${Math.round(through.waitedMs / 1000)}초)` });
+  if (!through.ok) {
+    steps.push({ ok: false, step: "queue", reason: through.reason });
+    if (buy.handoffOnFailure) await host.showToHuman(`주문창에 들어가지 못했습니다 — ${through.reason}`);
+    return result(false, /체크포인트|사람/.test(through.reason) ? "handed-off" : "failed", through.reason);
+  }
   let firstStage = await waitForm();
 
-  // 0-1) 장바구니 → 체크아웃 사이의 **체크포인트** — 사람이 캡차를 풀면 버튼은 대신 누른다.
+  // 0-2) 그래도 체크포인트면(대기열 길을 거치지 않은 판) — 사람이 캡차를 풀면 버튼은 대신 누른다.
   if (isCheckpointUrl(firstStage?.url)) {
     const passed = await passCheckpoint(host, { captcha: captchaOpts });
     steps.push({ ok: passed.ok, step: "checkpoint", reason: passed.reason });
@@ -324,8 +345,12 @@ export async function runCheckout(
   //    카드칸이나 배송방법이 이미 보이면 계속 버튼을 찾지 않고 그대로 카드 단계로 간다.
   if (needsShipping) {
     const before = (await host.run(stageScript())) as StageReport | null;
+    // **결제 버튼이 보이면 한 화면이다** — 슈프림(Shopify 새 체크아웃)은 결제 버튼("process payment")이 처음부터
+    // 있고 카드칸은 늦게 그려진다. 카드칸만 보고 판정했더니 계속 버튼을 찾다 할인코드 칸의 Submit 을 누르고,
+    // 1.5초마다 배송칸을 다시 넣어 배송비 계산을 되풀이시켰다 (2026-10-10 로그 · 2026-10-08 실제 주문창 덤프).
     const onePage =
-      (before?.cardFrames?.length ?? 0) > 0 || before?.present?.["cardNumber"] === true || (before?.shippingRates ?? 0) > 0;
+      (before?.cardFrames?.length ?? 0) > 0 || before?.present?.["cardNumber"] === true || (before?.shippingRates ?? 0) > 0 ||
+      (before?.payLabel ?? "") !== "";
     if (onePage) {
       steps.push({ ok: true, step: "continue", reason: "한 화면 체크아웃 — 계속 버튼 없이 진행" });
       host.note("이 체크아웃은 한 화면입니다 — 계속 버튼 없이 배송 방법·카드로 넘어갑니다");

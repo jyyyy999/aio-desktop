@@ -10,7 +10,7 @@
  * 요청 간격은 실패에 따라 물러난다 (backoff). 차단 화면(사람 확인)을 만나면 hooks.onBlocked 로
  * 창을 사람에게 넘기고, 사람이 통과할 때까지 기다린 뒤 이어서 본다 — 자동으로 뚫지 않는다.
  */
-import { type DropEvent, type BuyRule, type MonitorRule, buildSnapshot, decide, describe, diff, matchProduct, needsFullName, type Snapshot, withFullName } from "./match.js";
+import { type DropEvent, type BuyRule, type MonitorRule, buildSnapshot, colorExact, decide, describe, diff, matchProduct, needsFullName, productColor, type Snapshot, withFullName } from "./match.js";
 import { LINES } from "./lines.js";
 import type { Product, Shop } from "./site.js";
 
@@ -201,8 +201,26 @@ export async function watchLoop(
     // 사이즈 수만큼 온다(실측: 발견 줄 5번 · "사지 않음" 줄이 상품×사이즈). 사이즈는 decide 가 상품 전체에서 고른다.
     // 사이즈 조건(variant 단계)에서만 떨어진 것은 다른 사이즈 이벤트로 다시 본다.
     const judged = new Set<string>();
-    for (const event of events) {
+    // 색을 적었으면 **색이 정확히 같은 상품을 먼저** 본다 — "black" 에 Black 과 Washed Black 이 둘 다 걸리면
+    // 걸리는 대로 바로 사니까, 순서가 곧 무엇을 사느냐다 (2026-10-12).
+    const exact = (e: DropEvent): number => (rule.colors.some((c) => colorExact(productColor(e.product), c)) ? 1 : 0);
+    const ordered = rule.colors.length ? [...events].sort((a, b) => exact(b) - exact(a)) : events;
+    // 같은 상품에 **정확히 그 색**이 따로 있으면(품절이어도) 비슷한 색으로는 사지 않는다 —
+    // Black 이 품절이고 Washed Black 만 남았다고 Washed Black 을 담지 않게 (2026-10-12 실사이트 225개 확인).
+    const baseOf = (p: Product): string => {
+      const c = productColor(p);
+      return c && p.title.endsWith(` - ${c}`) ? p.title.slice(0, -(c.length + 3)) : p.title;
+    };
+    const exactBases = new Set(
+      rule.colors.length ? products.filter((p) => rule.colors.some((c) => colorExact(productColor(p), c))).map(baseOf) : [],
+    );
+    for (const event of ordered) {
       if (judged.has(event.product.handle)) continue;
+      if (rule.colors.length && !exact(event) && exactBases.has(baseOf(event.product))) {
+        judged.add(event.product.handle);
+        log.note(`${describe(event.product, event.variant)} · 사지 않음: 색상 불일치(${productColor(event.product)} — 정확히 ${rule.colors.join("/")} 인 상품이 따로 있습니다)`);
+        continue;
+      }
       let product = event.product;
 
       // 1) **variant 를 해석하기 전에 키워드·가격으로 거른다.**

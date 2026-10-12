@@ -276,6 +276,8 @@ function buyOptions(cfg: SupremeConfig): BuyOptions {
     threeDsHandoff: cfg.buy.three_ds_handoff,
     stepTimeoutMs: 45_000,
     captchaTimeoutMs: cfg.captcha.timeout_ms,
+    // 지켜보기·지금 구매도 체크아웃 대기열을 탄다 — 드랍과 같은 한도.
+    queueTimeoutMs: Math.max(1, cfg.drop.queue_timeout_minutes) * 60_000,
     handoffOnFailure: cfg.buy.handoff_on_failure,
     shippingPrefer: cfg.buy.shipping_prefer,
   };

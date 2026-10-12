@@ -43,6 +43,8 @@ export interface Product {
   priceMax: number;
   /** HTML 폴백으로만 알게 된 상품 — variant 정보가 없다 (살 때 /products/<handle>.js 로 해석). */
   partial?: boolean;
+  /** 상품의 색 (슈프림은 색마다 상품이 따로 — products-json 의 color · 상품 페이지 h2) */
+  color?: string;
 }
 
 export interface ListResult {
@@ -185,8 +187,9 @@ export function normalizeProduct(raw: RawProduct, priceDivisor = MINOR_UNITS): P
 export function withPageColor(product: Product, color: string): Product {
   const c = color.trim();
   if (!c || product.options.some((o) => COLOR_OPTION_RE.test(o))) return product;
-  if (product.title.toLowerCase().includes(c.toLowerCase())) return product;
-  return { ...product, title: `${product.title} - ${c}`, tags: [product.tags, c].filter(Boolean).join(", ") };
+  // 색은 따로도 적어 둔다 — 색 조건은 이름이 아니라 이 칸과 견준다 (match.ts productColor).
+  if (product.title.toLowerCase().endsWith(` - ${c.toLowerCase()}`)) return { ...product, color: c };
+  return { ...product, color: c, title: `${product.title} - ${c}`, tags: [product.tags, c].filter(Boolean).join(", ") };
 }
 
 /** HTML 폴백이 돌려준 카드 한 장 → 표준 모양 (variant 없음) */

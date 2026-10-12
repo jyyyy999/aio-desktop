@@ -189,6 +189,11 @@ export interface QueueOptions {
    * 없으면 체크포인트에서는 주소를 다시 열지 않고 기다리기만 한다 (다시 열면 캡차가 처음부터 다시 그려진다).
    */
   onCheckpoint?: () => Promise<boolean>;
+  /**
+   * 대기열도 체크포인트도 주문창도 아닌 화면이 이만큼 이어지면 실패로 돌려준다 (0 = 끝까지 기다린다).
+   * 주문창이 안 그려지는 고장을 대기열 시간(분 단위) 내내 붙들고 있지 않게.
+   */
+  idleTimeoutMs?: number;
 }
 
 export const DEFAULT_QUEUE_OPTIONS: QueueOptions = { url: "/checkout", timeoutMs: 30 * 60_000 };
@@ -228,6 +233,7 @@ export async function waitThroughQueue(host: QueueHost, options: Partial<QueueOp
   let lastNote = 0;
   let lastReload = Date.now();
   let blankSince = 0;
+  let unknownSince = 0;
   let info: QueueInfo | null = null;
   let sawQueue = false;
 
@@ -249,6 +255,16 @@ export async function waitThroughQueue(host: QueueHost, options: Partial<QueueOp
     }
 
     const atCheckpoint = isCheckpointUrl(info?.url);
+    unknownSince = atCheckpoint || info?.inQueue ? 0 : unknownSince || Date.now();
+    if (!opts.once && (opts.idleTimeoutMs ?? 0) > 0 && unknownSince && Date.now() - unknownSince > (opts.idleTimeoutMs ?? 0)) {
+      return {
+        ok: false,
+        waitedMs: Date.now() - started,
+        reason: `주문창도 대기열도 아닌 화면이 ${Math.round((opts.idleTimeoutMs ?? 0) / 1000)}초 이어졌습니다 (${info?.url ?? "?"})`,
+        info,
+        rounds,
+      };
+    }
     if (opts.once) {
       const reason = info?.inQueue ? formatQueueLine(info) : atCheckpoint ? "체크포인트(hCaptcha) 화면입니다" : "대기열도 주문창도 아닙니다";
       return { ok: false, waitedMs: Date.now() - started, reason, info, rounds };

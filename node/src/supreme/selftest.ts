@@ -16,7 +16,7 @@ import { BASE, nextDropTime } from "./config.js";
 import { formatQueueLine, looksLikeQueue, parseQueue, queueScript, waitThroughQueue } from "./queue.js";
 import { isCheckpointUrl, passCheckpoint, submitCheckpointScript } from "./checkpoint.js";
 import { LINES, LINE_PATTERNS } from "./lines.js";
-import { buildSnapshot, decide, describeKeywords, describeOption, diff, isKeywordSpec, matchProduct, needsFullName, parseHandle, parseKeywordSpec, parseOptionSpec, pickVariant, sizeEquals, withFullName, type BuyRule, type MonitorRule } from "./match.js";
+import { buildSnapshot, decide, describeKeywords, describeOption, diff, hasKeyword, isKeywordSpec, matchProduct, needsFullName, productColor, parseHandle, parseKeywordSpec, parseOptionSpec, pickVariant, sizeEquals, withFullName, type BuyRule, type MonitorRule } from "./match.js";
 import { agreementsScript, chooseCardMethodScript, clickContinueScript, fillScript, saveInfoScript, stageScript } from "./checkout-fill.js";
 import { focusScript, probeScript, tokenScript, unionRect, needsHuman, unfocusScript, type CaptchaProbe } from "./captcha.js";
 import { colorFromProductHtml, fetchPageProducts, normalizeCard, normalizeProduct, productPageScript, withPageColor } from "./site.js";
@@ -640,6 +640,80 @@ async function pageJsonTests(): Promise<void> {
 }
 
 /**
+ * 색·키워드는 **낱말로** 견준다 — 2026-10-12 실사이트 225개에서 글자 일부로 찾았더니
+ * +red 가 "Predator Camo" 9개, +tan 이 "Stand Collar … - Black" 재킷에 걸렸다.
+ */
+async function colorWordTests(): Promise<void> {
+  console.log("\n== 색·키워드는 낱말로 (red ≠ Predator · tan ≠ Stand) ==");
+  ok("red 는 Predator 에 안 걸린다", !hasKeyword("GORE-TEX N-2B Jacket - Predator Camo", "red"));
+  ok("tan 은 Stand 에 안 걸린다", !hasKeyword("Stand Collar Lined Nylon Jacket - Black", "tan"));
+  ok("낱말 앞부분은 된다(sweat → Sweatshirt)", hasKeyword("Washed Logo Hooded Sweatshirt - Black", "sweat"));
+  ok("n-2b · gore-tex 같은 낱말 묶음", hasKeyword("GORE-TEX N-2B Jacket - Red", "n-2b") && hasKeyword("GORE-TEX N-2B Jacket - Red", "gore-tex"));
+  ok("악센트 무시(applique → Appliqué)", hasKeyword("Slant Appliqué Half Zip Pullover - Ash Grey", "applique"));
+  const item = (title: string, color: string) => ({ ...normalizeProduct({ ...RAW, title, options: ["Size"], variants: [{ id: 1, title: "Large", option1: "Large", available: true, price: 100 }] }), color });
+  const wantRed = rule({ colors: ["red"] });
+  ok("색 Red 를 원하면 Predator Camo 는 안 산다", matchProduct(item("Neck Pouch - Predator Camo", "Predator Camo"), wantRed).ok === false);
+  ok("색 Tan 을 원하면 Black 재킷은 안 산다", matchProduct(item("Stand Collar Lined Nylon Jacket - Black", "Black"), rule({ colors: ["tan"] })).ok === false);
+  ok("색 이름 일부 낱말은 된다(camo → Predator Camo)", matchProduct(item("Backpack - Predator Camo", "Predator Camo"), rule({ colors: ["camo"] })).ok === true);
+  ok("이름에 색 낱말이 있어도 색이 다르면 안 산다(Black Sabbath Tee - White)", matchProduct(item("Black Sabbath Tee - White", "White"), rule({ colors: ["black"] })).ok === false);
+  ok("색 칸이 없으면 이름 끝의 ' - 색' 을 쓴다", productColor(normalizeCard({ handle: "x", title: "Box Logo Tee - Red", url: "/products/x", soldOut: false, image: "", price: 1 })) === "Red");
+
+  // Black 과 Washed Black 이 둘 다 걸리면 **정확히 Black** 을 먼저 산다.
+  const washed = { ...item("Selvedge Jean - Washed Black", "Washed Black"), handle: "washed" };
+  const black = { ...item("Selvedge Jean - Black", "Black"), handle: "black" };
+  const bought: string[] = [];
+  const shop2 = {
+    lastResolveNote: "",
+    async list() {
+      return { mode: "page-json", status: 200, products: [washed, black], hero: "", note: "" };
+    },
+    async pageState() {
+      return { url: "", title: "", blocked: false, challenge: false, text: "" };
+    },
+    async resolve() {
+      return null;
+    },
+  } as unknown as Shop;
+  await watchLoop(
+    shop2,
+    rule({ include: ["selvedge"], colors: ["black"], silentFirstScan: false }),
+    buyRule({ sizePriority: ["Large"] }),
+    { origin: "https://mock", collections: ["all"], dryRun: false, maxRounds: 1, maxBuys: 1, intervalMs: 0, jitterMs: 0 },
+    {
+      async onEvents(events) {
+        bought.push(events[0]!.product.title);
+      },
+    },
+    { note() {}, ok() {}, warn() {}, error() {}, step() {}, tick() {} },
+    () => false,
+  );
+  ok("Black 과 Washed Black 이 다 걸리면 정확히 Black 을 산다", bought[0] === "Selvedge Jean - Black", bought.join(" | "));
+
+  // Black 이 품절이고 Washed Black 만 남았으면 — 사지 않는다 (원한 건 Black 이다).
+  const blackSoldOut = { ...black, available: false, variants: black.variants.map((v) => ({ ...v, available: false })) };
+  const bought2: string[] = [];
+  const shop3 = Object.assign(Object.create(shop2) as Shop, {
+    async list() {
+      return { mode: "page-json", status: 200, products: [washed, blackSoldOut], hero: "", note: "" };
+    },
+  });
+  await watchLoop(
+    shop3,
+    rule({ include: ["selvedge"], colors: ["black"], silentFirstScan: false }),
+    buyRule({ sizePriority: ["Large"] }),
+    { origin: "https://mock", collections: ["all"], dryRun: false, maxRounds: 1, maxBuys: 1, intervalMs: 0, jitterMs: 0 },
+    {
+      async onEvents(events) {
+        bought2.push(events[0]!.product.title);
+      },
+    },
+    { note() {}, ok() {}, warn() {}, error() {}, step() {}, tick() {} },
+    () => false,
+  );
+  ok("Black 이 품절이면 Washed Black 으로 대신 사지 않는다", bought2.length === 0, bought2.join(" | "));
+}
+
+/**
  * 대기열 안에서는 새로 고치지 않는다 — 다시 열면 자리를 잃을 수 있다 (2026-10-10 요청).
  * 시계를 가짜로 돌려 몇 분을 몇 ms 에 지나 보낸다.
  */
@@ -780,7 +854,8 @@ async function dropTests(): Promise<void> {
  */
 async function onceBuyTests(): Promise<void> {
   console.log("\n== 지금 구매 (크롬은 감시와 나란히) ==");
-  const mock = await startMockShop({ checkpoint: true, autoSolveCaptcha: true });
+  // 실제 슈프림 모양: 체크포인트 → 대기열 → 한 화면 체크아웃(결제 버튼은 처음부터, 카드칸은 늦게 · 할인코드 Submit).
+  const mock = await startMockShop({ checkpoint: true, autoSolveCaptcha: true, queueMs: 3000, onePage: true });
   const home = mkdtempSync(join(tmpdir(), "supreme-once-"));
   try {
     writeFileSync(join(home, "supreme_config.json"), JSON.stringify({
@@ -799,6 +874,9 @@ async function onceBuyTests(): Promise<void> {
     ok("지금 구매가 끝까지 돈다", code === 0, `코드 ${code} · ${tail}`);
     ok("White/Large(50013)를 담는다", mock.cart.length === 1 && mock.cart[0]?.variantId === "50013", JSON.stringify(mock.cart));
     ok("결제까지 간다", mock.hits.includes("GET /thank_you") && /결제 완료|주문 완료/.test(out), tail);
+    ok("지금 구매도 대기열을 탄다(새로 고치지 않고)", mock.hits.includes("queue-page") && /대기열을 통과했습니다/.test(out), tail);
+    ok("결제 버튼이 보이면 곧바로 한 화면으로 본다", /한 화면 체크아웃/.test(out) && !/결제 단계를 기다리는 중/.test(out), tail);
+    ok("할인코드 칸의 Submit 을 계속 버튼으로 누르지 않는다", !mock.hits.includes("POST /discount") && !/계속 버튼을 눌렀습니다/.test(out), mock.hits.filter((h) => /discount/.test(h)).join(","));
   } finally {
     await mock.close();
     rmSync(home, { recursive: true, force: true });
@@ -998,6 +1076,7 @@ async function main(): Promise<void> {
   await queueNoReloadTests();
   await pageColorTests();
   await pageJsonTests();
+  await colorWordTests();
   if (process.argv.includes("--browser")) {
     await browserTests();
     await htmlFallbackTests();
