@@ -9,6 +9,8 @@
 앱은 원본을 **폴더 자리로** 찾는다 — `aio/desktop` 옆의 `aio/node`, 그리고 `aio` 옆의 `naver/ts`.
 그래서 두 저장소를 이 배치대로 받는다.
 
+맥에서 쓸 때는 [README-macos.md](README-macos.md) — 윈도우와 다른 것만 따로 적었다.
+
 ## 새 PC 에서
 
 ```bash
