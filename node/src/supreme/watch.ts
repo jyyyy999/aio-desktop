@@ -143,6 +143,7 @@ export async function watchLoop(
   let snapshot: Snapshot | null = null;
   let interval = opts.intervalMs;
   let consecutiveErrors = 0;
+  const toldSoldOut = new Set<string>();
 
   log.step(`감시를 시작합니다 — 컬렉션 ${opts.collections.join(", ")} · 간격 ${opts.intervalMs}ms${opts.dryRun ? " · 드라이런(사지 않습니다)" : ""}`);
 
@@ -286,6 +287,17 @@ export async function watchLoop(
         hooks.onRound?.({ round: state.round, products: state.products, events: state.events, ms });
         log.note(LINES.stopped(`구매를 ${state.buys}번 시도해 멈췄습니다`));
         return { state, ok: true, reason: `구매 ${state.buys}회` };
+      }
+    }
+
+    // 키워드에는 맞는데 **전 사이즈 품절**인 상품은 diff 가 이벤트를 안 내서 로그에 한 줄도 안 남는다 —
+    // "Fuck You Zip Up Hooded Sweatshirt" 가 셋 다 품절이라 "안 잡힌다"로 보였다 (2026-10-15). 상품마다 한 번만 알린다.
+    if (rule.onlyAvailable && (!first || !rule.silentFirstScan)) {
+      for (const p of products) {
+        if (p.available || toldSoldOut.has(p.handle) || !matchProduct(p, rule).ok) continue;
+        toldSoldOut.add(p.handle);
+        const next = opts.maxRounds === 1 ? "지켜보기로 두면 재입고될 때 삽니다" : "재입고되면 바로 봅니다";
+        log.note(`${LINES.stockOut(describe(p, null))} · 키워드에 맞지만 전 사이즈 품절 — ${next}`);
       }
     }
 

@@ -714,6 +714,35 @@ async function colorWordTests(): Promise<void> {
     () => false,
   );
   ok("Black 이 품절이면 Washed Black 으로 대신 사지 않는다", bought2.length === 0, bought2.join(" | "));
+
+  // 키워드에 맞는데 전 사이즈 품절이면 말없이 빠지지 않고 "품절 — …" 을 한 번 남긴다 (2026-10-15).
+  const fy = { ...item("Fuck You Zip Up Hooded Sweatshirt - Black", "Black"), handle: "fy" };
+  const fySoldOut = { ...fy, available: false, variants: fy.variants.map((v) => ({ ...v, available: false })) };
+  const hoodie = { ...item("Washed Logo Hooded Sweatshirt - Black", "Black"), handle: "washed-hoodie" };
+  const notes: string[] = [];
+  const bought3: string[] = [];
+  const shop4 = Object.assign(Object.create(shop2) as Shop, {
+    async list() {
+      return { mode: "page-json", status: 200, products: [hoodie, fySoldOut], hero: "", note: "" };
+    },
+  });
+  await watchLoop(
+    shop4,
+    rule({ include: ["fuck", "you"], silentFirstScan: false }),
+    buyRule({ sizePriority: ["Large"] }),
+    { origin: "https://mock", collections: ["sweatshirts"], dryRun: false, maxRounds: 2, maxBuys: 1, intervalMs: 0, jitterMs: 0 },
+    {
+      async onEvents(events) {
+        bought3.push(events[0]!.product.title);
+      },
+    },
+    { note: (s: string) => notes.push(s), ok() {}, warn() {}, error() {}, step() {}, tick() {} },
+    () => false,
+  );
+  const told = notes.filter((s) => s.includes("품절 — Fuck You Zip Up Hooded Sweatshirt"));
+  ok("키워드에 맞는 품절 상품은 '품절 — …' 로 알린다", told.length === 1, notes.join(" | "));
+  ok("품절 알림은 키워드에 안 맞는 상품에는 없다", !notes.some((s) => s.includes("품절 — Washed Logo")));
+  ok("품절 상품은 사지 않는다", bought3.length === 0, bought3.join(" | "));
 }
 
 /**
