@@ -70,16 +70,16 @@ cd ~/project/aio/desktop && npm install && npm start
 
 - **크롬을 화면 밖에 띄우는 것이 안 숨겨질 수 있다.** 슈프림 등은 크롬을 `-32000,-32000` 에 세워 눈에 안 보이게
   하는데, 맥은 창을 화면 안으로 끌어다 놓는다. 창이 화면에 보여도 고장이 아니다 — 그냥 두면 된다.
-- **슈프림: 남은 크롬을 앱이 못 치운다.** 같은 프로필로 크롬이 이미 떠 있으면 새 크롬이
-  `Chrome failed to start: crashed` 로 죽는다. 윈도우에서는 띄우기 전에 그 크롬을 PowerShell 로 찾아 끄는데
-  (`node/src/supreme/browser.ts` 의 `killChromeUsingProfile`), 맥에는 PowerShell 이 없어 **조용히 건너뛴다.**
-  이 오류가 나면 남은 크롬 창을 닫거나, 터미널에서 그 프로필을 쓰는 크롬만 끈다.
+- **슈프림: 남은 크롬 정리.** 같은 프로필로 크롬이 이미 떠 있으면 새 크롬이 `Chrome failed to start: crashed` 로
+  죽는다. 그래서 띄우기 전에 그 프로필을 쓰는 크롬만 찾아 끈다 (`node/src/supreme/browser.ts` 의
+  `killChromeUsingProfile`). 윈도우는 PowerShell, 맥·리눅스는 `ps` 로 명령줄에 `--user-data-dir=<그 프로필>` 이 있는
+  크롬만 고른다 — 평소 쓰는 크롬은 건드리지 않는다. 고르는 규칙은 셀프테스트(`npm run supreme:selftest`)가 맥 모양
+  `ps` 출력으로 확인하지만, **진짜 맥에서는 아직 돌려 보지 않았다.** 그래도 그 오류가 나면 남은 크롬 창을 닫거나
+  터미널에서 끈다.
 
   ```bash
   pkill -f "user-data-dir=.*aio-task-manager"
   ```
-
-  평소 쓰는 크롬은 명령줄에 이 경로가 없어서 같이 꺼지지 않는다.
 
 ## 윈도우 PC 에서 옮겨 오기
 

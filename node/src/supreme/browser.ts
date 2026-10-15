@@ -11,7 +11,7 @@
  * 화면 안으로 옮긴 뒤 "캡차만 남기는" 집중 모드를 건다 — 사람 눈에는 hCaptcha 만 있는 창이다.
  * 풀고 나면 그 창에서 그대로 이어서 진행한다 (토큰이 그 창의 폼에 들어가 있으므로).
  */
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -62,6 +62,7 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
  */
 export function killChromeUsingProfile(profileDir: string): number {
   if (!profileDir) return 0;
+  if (process.platform !== "win32") return killChromeUsingProfilePosix(profileDir);
   // 결과는 **파일로** 받는다. child_process 의 파이프(stdio: pipe)는 이 환경에서 막힐 수 있다(EPERM).
   const outFile = join(tmpdir(), `supreme-kill-${process.pid}-${Date.now()}.txt`);
   // PowerShell 문자열은 **작은따옴표**로. JSON.stringify 를 쓰면 경로가 C:\\Users\\… 로 들어가
@@ -82,6 +83,62 @@ export function killChromeUsingProfile(profileDir: string): number {
     log.debug(`프로필을 쓰는 크롬을 정리하지 못했습니다: ${String((e as Error).message || e)}`);
     return 0;
   }
+}
+
+/**
+ * 맥·리눅스 판. PowerShell 이 없으니 `ps` 로 모든 프로세스의 명령줄을 받아 고른다.
+ *
+ * 맥은 앱 데이터가 `~/Library/Application Support/…` 라 프로필 경로에 **띄어쓰기가 있다.** `ps` 는 인자를
+ * 띄어쓰기로 이어 붙여 보여 주므로 경로를 쪼개지 말고 `--user-data-dir=<경로>` 통째로 찾는다. 뒤에 띄어쓰기나
+ * 줄 끝이 와야 한다 — `chrome-profile` 이 `chrome-profile-2` 를 잡지 않게.
+ * 크롬 본체와 도우미(맥의 "Google Chrome Helper (Renderer)" 따위) 모두 명령줄에 이 인자를 달고 있어 같이 잡힌다.
+ * 윈도우 판이 chrome.exe 전부를 세는 것과 같다.
+ */
+function killChromeUsingProfilePosix(profileDir: string): number {
+  // 윈도우 판처럼 결과는 파일로 받는다 (파이프를 쓰지 않는다).
+  const outFile = join(tmpdir(), `supreme-kill-${process.pid}-${Date.now()}.txt`);
+  try {
+    const fd = openSync(outFile, "w");
+    try {
+      spawnSync("ps", ["-axww", "-o", "pid=,command="], { stdio: ["ignore", fd, "ignore"], timeout: 10_000 });
+    } finally {
+      closeSync(fd);
+    }
+    let killed = 0;
+    for (const pid of pidsUsingProfile(readFileSync(outFile, "utf-8"), profileDir, process.pid)) {
+      try {
+        process.kill(pid, "SIGKILL");
+        killed++;
+      } catch {
+        /* 그새 끝났다 */
+      }
+    }
+    return killed;
+  } catch (e) {
+    log.debug(`프로필을 쓰는 크롬을 정리하지 못했습니다: ${String((e as Error).message || e)}`);
+    return 0;
+  } finally {
+    rmSync(outFile, { force: true });
+  }
+}
+
+/** `ps -axww -o pid=,command=` 의 출력에서 이 프로필을 쓰는 크롬의 pid 만. 나(self)는 뺀다. */
+export function pidsUsingProfile(psOutput: string, profileDir: string, self: number): number[] {
+  const flag = `--user-data-dir=${profileDir}`;
+  const out: number[] = [];
+  for (const line of psOutput.split("\n")) {
+    const m = /^\s*(\d+)\s+(.*?)\s*$/.exec(line);
+    if (!m) continue;
+    const pid = Number(m[1]);
+    const command = m[2] ?? "";
+    const at = command.indexOf(flag);
+    // 크롬인지는 **인자 앞쪽**(실행 파일)으로 본다. 프로필 경로 자체에 chrome-profile 이 있어서, 명령줄 전체를
+    // 보면 같은 경로를 인자로 받은 node 따위도 크롬으로 잡힌다.
+    if (pid === self || at < 0 || !/chrom/i.test(command.slice(0, at))) continue;
+    const next = command.charAt(at + flag.length);
+    if (next === "" || next === " ") out.push(pid);
+  }
+  return out;
 }
 
 /** 크롬이 남긴 잠금 파일 껍데기를 치운다 (프로세스가 없으면 무해하지만, 있으면 못 뜨는 판이 있다). */

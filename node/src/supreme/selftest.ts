@@ -21,7 +21,7 @@ import { agreementsScript, chooseCardMethodScript, clickContinueScript, fillScri
 import { focusScript, probeScript, tokenScript, unionRect, needsHuman, unfocusScript, type CaptchaProbe } from "./captcha.js";
 import { colorFromProductHtml, fetchPageProducts, normalizeCard, normalizeProduct, productPageScript, withPageColor } from "./site.js";
 import { Shop } from "./site.js";
-import { SupremeBrowser } from "./browser.js";
+import { pidsUsingProfile, SupremeBrowser } from "./browser.js";
 import { addToCart, runCheckout, type Profile } from "./checkout.js";
 import { watchLoop } from "./watch.js";
 import { startMockShop } from "./mock-shop.js";
@@ -252,6 +252,22 @@ function pureTests(): void {
   ok("생년월일·카드 PIN 칸", fillScript({ dateOfBirth: "1990-01-01", cardPinFirstTwo: "12" }).includes("PersonalCardDateOfBirth") && fillScript({}).includes("PersonalCardPinCodeFirstTwoDigits"));
   ok("카드 수단 라디오", chooseCardMethodScript().includes("basic-creditCards"));
   ok("다음에 저장", saveInfoScript(true).includes("save_shipping_information"));
+
+  console.log("\n== 남은 크롬 정리 (맥·리눅스 ps) ==");
+  const prof = "/Users/me/Library/Application Support/aio-task-manager/task-homes/t1/chrome-profile";
+  const psOut = [
+    `  101 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=${prof} --no-first-run`,
+    `  102 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --user-data-dir=${prof}`,
+    `  103 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=${prof}-2`,
+    "  104 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    `  105 /usr/local/bin/node dist/supreme/index.js --user-data-dir=${prof}`,
+    `  106 /opt/google/chrome/chrome --user-data-dir=${prof}`,
+    "",
+  ].join("\n");
+  const stale = pidsUsingProfile(psOut, prof, 999);
+  ok("이 프로필 크롬 본체·도우미를 고른다 (경로에 띄어쓰기)", stale.includes(101) && stale.includes(102) && stale.includes(106), String(stale));
+  ok("chrome-profile-2 · 평소 크롬 · 크롬 아닌 것은 안 고른다", !stale.includes(103) && !stale.includes(104) && !stale.includes(105), String(stale));
+  ok("나는 안 고른다", pidsUsingProfile(psOut, prof, 101).includes(101) === false);
   void buildSnapshot;
 }
 
