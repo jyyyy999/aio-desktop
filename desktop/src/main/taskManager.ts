@@ -14,13 +14,14 @@
  *   - 아니면 다시 시작한다. 구매 중이거나 구매 창이 열려 있으면 그게 끝날 때까지 미룬다
  *
  * 로그인은 태스크가 고른 프로필(profileOf)의 것으로 돈다. 프로필 폴더를 어댑터에 넘기면 어댑터가
- * 원본에 넘길 꼴(롯데 쿠키 환경변수 · 네이버 세션 경로 돌리기)로 바꾼다.
+ * 원본에 넘길 꼴(롯데 쿠키 환경변수 · 네이버 세션 경로 돌리기)로 바꾼다. 결제 비밀번호도 그 프로필 것을 띄우기
+ * 직전에 풀어(pinOf) 환경변수로 넘긴다 — 없으면 빈 값.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { FIELD_LABEL, MODE_LABEL, planDrop, PREPARE_LOG, REPEATING_MODES, SITE_IDS, SITES, TIMING_BLANK } from "../shared/sites.js";
+import { FIELD_LABEL, MODE_LABEL, pinMatters, planDrop, PREPARE_LOG, REPEATING_MODES, SITE_IDS, SITES, TIMING_BLANK } from "../shared/sites.js";
 import type {
   CommonSettings, LogLine, MainMessage, Settings, SiteId, SiteInfo, TaskDef, TaskRuntime, WorkerMessage,
 } from "../shared/types.js";
@@ -65,12 +66,13 @@ interface Slot {
 
 /** 태스크 파일에서 읽었거나 화면에서 온 태스크에 나중에 생긴 칸을 채운다. */
 function normalize(t: Partial<TaskDef>): TaskDef {
-  // 프로필 칸은 0.3 에 생겼다. 비었으면(화면의 "없음") 칸째로 뺀다.
-  const { profileId, ...rest } = t;
+  // 프로필 칸은 0.3 에 생겼다. 비었으면(화면의 "없음") 칸째로 뺀다. 결제 로그인 프로필도 같다.
+  const { profileId, payProfileId, ...rest } = t;
   return {
     ...TIMING_BLANK,
     ...rest,
     ...(profileId ? { profileId } : {}),
+    ...(payProfileId ? { payProfileId } : {}),
     dropSettings: { ...TIMING_BLANK.dropSettings, ...t.dropSettings },
     site: t.site && t.site in ADAPTERS ? t.site : "lotte",
   } as TaskDef;
@@ -147,6 +149,8 @@ export class TaskManager extends EventEmitter {
     private settings: Settings,
     /** 로그인 프로필을 찾는다 (SessionManager). 없으면 null. */
     private readonly profileOf: (id: string) => ProfileRef | null,
+    /** 그 프로필의 결제 비밀번호를 푼다 (SessionManager.paymentPin). 띄우기 직전에만 부른다. 없으면 "", 못 풀면 던진다. */
+    private readonly pinOf: (profileId: string) => string,
     /** 태스크 밖에서 사이트를 두드리는 것 (도는 모니터). 요청률 합과 "한 프로필에 하나" 에 같이 센다. */
     private readonly outside: () => LiveUse[] = () => [],
   ) {
@@ -223,17 +227,24 @@ export class TaskManager extends EventEmitter {
   /** 이 프로필로 돌고 있거나 예약된 태스크의 이름. 프로필을 지우거나 로그아웃하기 전에 본다. */
   busyWith(profileId: string): string[] {
     return this.tasks
-      .filter((t) => t.profileId === profileId && (this.isLive(t.id) || this.isScheduled(t.id)))
+      .filter((t) => (t.profileId === profileId || t.payProfileId === profileId) && (this.isLive(t.id) || this.isScheduled(t.id)))
       .map(nameOf);
   }
 
-  /** 프로필이 지워졌다. 그 프로필을 고른 태스크는 프로필 없음으로 돌린다 (띄울 때 고르라고 한다). */
+  /**
+   * 프로필이 지워졌다. 그 프로필을 고른 태스크는 프로필 없음으로 돌린다 (띄울 때 고르라고 한다). 결제 로그인 프로필로
+   * 고른 것이면 그 칸만 비운다 — 결제창 로그인은 사람이 한다.
+   */
   forgetProfile(profileId: string): void {
-    if (!this.tasks.some((t) => t.profileId === profileId)) return;
+    if (!this.tasks.some((t) => t.profileId === profileId || t.payProfileId === profileId)) return;
     this.tasks = this.tasks.map((t) => {
-      if (t.profileId !== profileId) return t;
-      const { profileId: _gone, ...rest } = t;
-      return rest;
+      if (t.profileId !== profileId && t.payProfileId !== profileId) return t;
+      const { profileId: login, payProfileId: pay, ...rest } = t;
+      return {
+        ...rest,
+        ...(login && login !== profileId ? { profileId: login } : {}),
+        ...(pay && pay !== profileId ? { payProfileId: pay } : {}),
+      };
     });
     this.persist();
   }
@@ -349,7 +360,7 @@ export class TaskManager extends EventEmitter {
    *   - 프로필 없이 도는 모드가 아니다 (sites.ts 의 loginOptional)
    *   - 프로필이 로그인 중이다 (로그인 창이 떠 있다 — 끝나야 어느 로그인으로 돌지 정해진다)
    *   - 프로필에 로그인 정보가 없다
-   *   - 한 프로필에 태스크 하나인 사이트(네이버)에서, 그 프로필로 이미 다른 태스크가 돈다
+   *   - 한 프로필에 태스크 하나인 사이트(sites.ts 의 oneTaskPerProfile — 지금은 없다)에서, 그 프로필로 이미 다른 태스크가 돈다
    */
   private profileFor(task: TaskDef): { profile: ProfileRef | null; error: string | null } {
     const spec = SITES[task.site];
@@ -387,6 +398,28 @@ export class TaskManager extends EventEmitter {
       }
     }
     return { profile: p, error: null };
+  }
+
+  /**
+   * 결제창 로그인에 쓸 프로필 (sites.ts 의 payProfileSite — 반다이남코 네이버페이 → 네이버 프로필). 없거나 쓸 수
+   * 없으면 null 이고 로그에 까닭을 적는다 — 띄우기는 한다. 결제창에서 사람이 로그인하면 되니 실패가 아니다.
+   */
+  private payProfile(task: TaskDef, id: string): ProfileRef | null {
+    const site = SITES[task.site].payProfileSite;
+    if (!site || !task.payProfileId) return null;
+    const p = this.profileOf(task.payProfileId);
+    const what = `${SITES[site].name} 결제 로그인`;
+    if (!p || p.site !== site) {
+      this.push(id, "sys", `${what} 프로필이 없습니다 (지워졌거나 다른 사이트 것) — 결제창 로그인은 사람이 합니다.`);
+      return null;
+    }
+    if (!p.hasLogin || p.loginStatus === "logging_in") {
+      this.push(id, "sys", `'${p.name}' 프로필에 로그인 정보가 없습니다 — 결제창 로그인은 사람이 합니다 (프로필 화면에서 로그인하세요).`);
+      return null;
+    }
+    this.push(id, "sys", `${what}: '${p.name}' 프로필의 세션` +
+      (p.loginStatus === "expired" ? " — 만료로 표시돼 있습니다. 원본이 안 된다고 하면 프로필 화면에서 다시 로그인하세요." : ""));
+    return p;
   }
 
   /** 도는 태스크 — 모니터가 요청률 합과 "한 프로필에 하나" 를 볼 때 쓴다. */
@@ -512,10 +545,32 @@ export class TaskManager extends EventEmitter {
       this.push(id, "sys", `주의 — '${profile.name}' 프로필이 만료로 표시돼 있습니다. 원본이 세션을 거절하면 프로필 화면에서 다시 로그인하세요.`);
     }
 
+    // 결제창 로그인 프로필 (반다이남코 네이버페이 → 네이버 프로필). 없거나 못 쓰면 null — 결제창에서 사람이 로그인한다.
+    const pay = this.payProfile(task, id);
+
+    // 결제 비밀번호는 프로필 것만 쓴다. 띄우기 직전에 풀어 환경변수로 넘기고 여기서는 들고 있지 않는다 (로그에는 자릿수만).
+    // 결제창 로그인 프로필이 있으면 그 프로필 것이 먼저다 — 네이버페이 비밀번호는 네이버 계정의 것이다. 없으면 로그인 프로필 것.
+    // 둘 다 없으면 원본이 결제창·인증 화면에서 사람을 기다린다 — 실패가 아니다.
+    const pinFrom = pay?.hasPaymentPin ? pay : profile?.hasPaymentPin ? profile : null;
+    let pin = "";
+    if (pinFrom) {
+      try {
+        pin = this.pinOf(pinFrom.id);
+      } catch (e) {
+        this.push(id, "sys", `${(e as Error).message} 비밀번호 없이 띄웁니다.`);
+      }
+    }
+    if (pinMatters(task, info.defaultAction)) {
+      this.push(id, "sys", pin
+        ? `결제 비밀번호: '${pinFrom!.name}' 프로필의 것 (${pin.length}자리)`
+        : `결제 비밀번호가 없습니다 — 결제 단계에서 사람이 넣어야 합니다${pay ? ` ('${pay.name}' 프로필 카드의 "결제 비밀번호 넣기")` : ""}.`);
+    }
+
     const home = this.homeOf(id);
+    const payDir = pay?.dir ?? null;
     let launch;
     try {
-      launch = adapter.launch(task, home, settings, this.common(), profile?.dir ?? null);
+      launch = adapter.launch(task, home, settings, this.common(), profile?.dir ?? null, pin, payDir);
     } catch (e) {
       this.push(id, "sys", `태스크 폴더를 준비하지 못했습니다: ${(e as Error).message}`);
       this.update(id, { status: "failed" });

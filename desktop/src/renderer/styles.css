@@ -56,10 +56,28 @@ code, .mono { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px
 .btn.ghost { background: transparent; }
 .btn.small { padding: 3px 8px; font-size: 12px; }
 
-.banner {
-  display: flex; flex-wrap: wrap; gap: 16px; align-items: center;
-  padding: 8px 18px; background: #2a1f0b; border-bottom: 1px solid #4a3510; color: #f5d08a;
+/* ── 알림 (🔔) — 상단 바 오른쪽. 예전 상단 배너 자리 ───────────────────────── */
+.notice { position: relative; }
+.notice-btn { position: relative; padding: 7px 10px; }
+.notice-btn.on { border-color: var(--accent); }
+.notice-count {
+  position: absolute; top: -6px; right: -6px; min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: 999px; background: var(--warn); color: #1a1205; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;
 }
+.notice-count.bad { background: var(--stop); color: white; }
+.notice-pop {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 9; width: min(440px, 90vw); max-height: 70vh; overflow: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,.5);
+  padding: 10px 12px; display: flex; flex-direction: column; gap: 10px;
+}
+.notice-head { display: flex; align-items: center; gap: 8px; }
+.notice-empty { padding: 12px 0; text-align: center; }
+.notice-site { border: 1px solid #4a3510; background: #2a1f0b; border-radius: 8px; padding: 8px 10px; color: #f5d08a; }
+.notice-site-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.notice-lines { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 3px; font-size: 12px; line-height: 1.45; }
+.notice-lines li.bad { color: #fca5a5; }
+.notice-actions { display: flex; gap: 6px; margin-top: 6px; }
+.notice-actions:empty { display: none; }
 
 .grid { flex: 1; display: grid; grid-template-rows: minmax(160px, 1fr) minmax(180px, 38%); min-height: 0; }
 
@@ -110,9 +128,11 @@ td.last { overflow: hidden; text-overflow: ellipsis; color: #c3c9d6; font-family
   padding: 20px; display: flex; flex-direction: column; gap: 12px;
 }
 .modal h2 { margin: 0 0 4px; font-size: 16px; }
-.modal label { display: flex; flex-direction: column; gap: 5px; flex: 1; font-size: 12px; }
+.modal label { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 0; font-size: 12px; }
 .modal label.narrow { flex: 0 0 80px; }
 .modal .row { display: flex; gap: 12px; }
+/* 한 줄에 놓인 칸은 입력칸끼리 줄을 맞춘다 (이름 옆 보조 글이 길어 두 줄이 돼도). */
+.modal .row > label { justify-content: flex-end; }
 .modal input, .modal select {
   background: var(--bg); border: 1px solid var(--line); border-radius: 7px; color: var(--text);
   padding: 8px 10px; font: inherit;
@@ -121,7 +141,7 @@ td.last { overflow: hidden; text-overflow: ellipsis; color: #c3c9d6; font-family
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; margin-top: 6px; }
 
 /* ── 사이트 ─────────────────────────────────────────────────────────── */
-:root { --lotte: #ff5a5f; --naver: #03c75a; }
+:root { --lotte: #ff5a5f; --naver: #03c75a; --bnkr: #4a8cff; --supreme: #e4002b; }
 
 .site {
   display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .6px;
@@ -129,6 +149,8 @@ td.last { overflow: hidden; text-overflow: ellipsis; color: #c3c9d6; font-family
 }
 .site.lotte { color: var(--lotte); background: #2a1113; }
 .site.naver { color: var(--naver); background: #0b2417; }
+.site.bnkr { color: var(--bnkr); background: #0f1a2e; }
+.site.supreme { color: var(--supreme); background: #2a0d12; }
 
 .filters { display: flex; gap: 6px; padding: 8px 18px; border-bottom: 1px solid var(--line); background: var(--bg); }
 .chip {
@@ -139,10 +161,9 @@ td.last { overflow: hidden; text-overflow: ellipsis; color: #c3c9d6; font-family
 .chip.on { color: var(--text); border-color: var(--accent); background: #1b1733; }
 .chip.on.lotte { border-color: var(--lotte); background: #2a1113; }
 .chip.on.naver { border-color: var(--naver); background: #0b2417; }
+.chip.on.bnkr { border-color: var(--bnkr); background: #0f1a2e; }
+.chip.on.supreme { border-color: var(--supreme); background: #2a0d12; }
 
-.banner { flex-direction: column; align-items: stretch; gap: 6px; }
-.banner-site { display: flex; align-items: center; gap: 12px; }
-.banner-lines { display: flex; flex-direction: column; gap: 2px; flex: 1; }
 
 .icon.force { width: auto; padding: 0 8px; color: var(--warn); border-color: #5a3f0c; }
 
@@ -153,6 +174,8 @@ td.last { overflow: hidden; text-overflow: ellipsis; color: #c3c9d6; font-family
 .segmented button + button { border-left: 1px solid var(--line); }
 .segmented button.on.lotte { color: var(--lotte); background: #2a1113; font-weight: 600; }
 .segmented button.on.naver { color: var(--naver); background: #0b2417; font-weight: 600; }
+.segmented button.on.bnkr { color: var(--bnkr); background: #0f1a2e; font-weight: 600; }
+.segmented button.on.supreme { color: var(--supreme); background: #2a0d12; font-weight: 600; }
 
 .modal.wide { width: min(760px, 94vw); max-height: 92vh; overflow: auto; }
 .site-box { border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px 14px; margin: 0; display: flex; flex-direction: column; gap: 10px; }
@@ -241,6 +264,10 @@ label.inline { display: flex; align-items: center; gap: 6px; font-size: 12px; co
 .modal .modal-field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; }
 .modal .static { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
 .modal .modal-text { margin: 0; }
+.profile-card .pin-line { display: flex; align-items: center; gap: 8px; }
+.pin-field { display: flex; gap: 6px; }
+.pin-field input { flex: 1; letter-spacing: 4px; }
+.pin-field .icon { width: 36px; height: auto; }
 
 /* ── 태스크 창 ─────────────────────────────────────────────────────── */
 .task-watch { height: 100%; display: flex; flex-direction: column; overflow-y: auto; }
@@ -263,6 +290,24 @@ label.inline { display: flex; align-items: center; gap: 6px; font-size: 12px; co
 .tw-cell.phase.paid { border-color: #14532d; }
 .tw-cell.phase.paid .v { color: var(--go); }
 .tw-target { font-size: 12px; }
+.tw-link { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.tw-queue { display: flex; flex-direction: column; gap: 6px; font-size: 12px; padding-top: 6px; border-top: 1px dashed var(--line); }
+.tw-queue p { margin: 0; }
+.tw-rate {
+  width: 64px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; color: var(--text); padding: 3px 6px; font: inherit;
+}
+.tw-link p { margin: 0; }
+.tw-link-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tw-link-url { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c3c9d6; }
+.tw-link-input {
+  flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--line); border-radius: 7px; color: var(--text); padding: 5px 8px;
+}
+.tw-link-input:focus { outline: none; border-color: var(--accent); }
+.link-copy {
+  max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block;
+  border: 0; background: transparent; color: #9bb4e6; padding: 0; cursor: pointer; text-align: left;
+}
+.link-copy:hover { text-decoration: underline; }
 .tw-note {
   padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: #0a0c10; color: #c3c9d6;
   font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -319,3 +364,41 @@ label.inline { display: flex; align-items: center; gap: 6px; font-size: 12px; co
 .modal label.check { flex-direction: row; align-items: center; gap: 8px; flex-wrap: wrap; }
 .modal label.check input { width: auto; padding: 0; }
 .modal fieldset.timing label.check span.small { flex-basis: 100%; margin-left: 24px; margin-top: -4px; }
+
+/* ── 슈프림 주문서 ───────────────────────────────────────────────────── */
+.grid.single { grid-template-rows: minmax(0, 1fr); }
+.order-page { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.order-head {
+  display: flex; align-items: center; gap: 10px; padding: 12px 18px;
+  background: var(--panel); border-bottom: 1px solid var(--line);
+}
+.order-title { display: flex; flex-direction: column; gap: 2px; }
+.order-title h2 { margin: 0; font-size: 16px; }
+.order-body { flex: 1; overflow: auto; padding: 14px 18px 22px; display: flex; flex-direction: column; gap: 12px; }
+.order-body > * { width: 100%; max-width: 1040px; }
+.order-status { margin: 0; padding: 8px 12px; border-radius: 0 8px 8px 0; font-size: 12px; }
+.order-status.warn { border-left: 2px solid var(--warn); background: #1d1708; color: #f5d08a; }
+.order-status.ok { border-left: 2px solid var(--go); background: #0c2415; color: #a7f3c4; }
+.order-card {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 12px 14px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+}
+.order-card h3 { margin: 0; font-size: 13px; font-weight: 600; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.order-card p { margin: 0; line-height: 1.5; }
+.order-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px 12px; }
+.order-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; font-size: 12px; }
+.order-field.wide { grid-column: span 2; }
+.order-label { display: flex; align-items: center; gap: 6px; color: #c3c9d6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.order-field input, .order-field select {
+  width: 100%; min-width: 0; background: var(--bg); border: 1px solid var(--line); border-radius: 7px;
+  color: var(--text); padding: 7px 10px; font: inherit;
+}
+.order-field input:focus, .order-field select:focus { outline: none; border-color: var(--accent); }
+.order-field select { color-scheme: dark; }
+.saved-tag { font-size: 10px; padding: 1px 6px; border-radius: 999px; color: var(--go); border: 1px solid #14532d; background: #0c2415; }
+.order-checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 6px 12px; }
+.order-check { display: flex; align-items: center; gap: 8px; font-size: 12px; cursor: pointer; }
+.order-check input { accent-color: var(--accent); margin: 0; }
+.order-actions { display: flex; align-items: center; gap: 8px; }
+.order-foot { line-height: 1.6; }
+@media (max-width: 900px) { .order-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

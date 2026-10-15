@@ -10,7 +10,9 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { LOTTE_ACTIONS } from "../../shared/sites.js";
-import type { CommonSettings, MonitorDef, OrderAction, SiteSettings, TaskDef, TimingDefaults, WebhookInfo } from "../../shared/types.js";
+import type {
+  CommonSettings, MonitorDef, OrderAction, QueuePeek, SiteSettings, TaskDef, TimingDefaults, WebhookInfo,
+} from "../../shared/types.js";
 import { MONITOR_MAX_BUYS, readJson, writeJsonAtomic, type JsonObject, type SiteAdapter } from "./adapter.js";
 
 const CONFIG = "lotteon_test_config.json";
@@ -43,6 +45,100 @@ const SITE = "https://www.lotteon.com";
 export const LOTTE_LOGIN_PATH = "/p/member/login";
 const LOGIN_CHECK_URL = `${SITE}/p/order/mylotte/orderDeliveryList`;
 const LOGIN_URL = `${SITE}${LOTTE_LOGIN_PATH}/common?rtnUrl=${encodeURIComponent(`${SITE}/`)}`;
+
+// ── 열리기 전 대기열 보기 ─────────────────────────────────────────────────────
+//
+// 원본이 쓰는 두 주소를 **쿠키 없이 읽기만** 한다. 원본 모듈을 main 에 들이지 않고 셈만 옮겨 적는다 — 원본은
+// 들이는 순간 제 집(LOTTEON_HOME)에 설정·로그를 만드는 모듈이 딸려 온다.
+//   상품 페이지  대기열이 서 있으면 본문 대신 숨은 칸(isWait·waitCnt·limitCnt·session_time_out)이 온다 — tracer.ts gateOf
+//   상품 API     아직 안 열렸으면 열리는 시각 — product.ts opensAtOf
+// 줄에 서지 않는다. 줄에 서는 것은 대기 화면 스크립트가 순번 쿠키(wcCookie)를 만들어 순번을 물을 때다 (tracer.ts).
+
+/** 원본 http.ts 의 Session 이 보내는 것과 같은 브라우저 이름. */
+const PEEK_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36";
+/** 원본 product.ts 의 STOCK_API. */
+const STOCK_API = "https://pbf.lotteon.com/product/v2/detail/search/base/sitm";
+
+/** 상품 주소(또는 상품번호) → 상품 번호 · 단품 번호. 원본 targets.ts 와 같은 규칙 (단품이 없으면 _001). */
+function itemOf(url: string): { key: string; sitm: string; page: string } {
+  const u = url.trim();
+  const key = /product\/([A-Za-z0-9_-]+)/.exec(u)?.[1] ?? u;
+  const sitm = decodeURIComponent(/[?&]sitmNo=([^&#]+)/.exec(u)?.[1] ?? "") || `${key}_001`;
+  return { key, sitm, page: `${SITE}/p/product/${key}?sitmNo=${encodeURIComponent(sitm)}` };
+}
+
+async function peekGet(url: string): Promise<string> {
+  const res = await fetch(url, {
+    headers: { "User-Agent": PEEK_UA, "Accept-Language": "ko-KR,ko;q=0.9" },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.text();
+}
+
+/** 원본 tracer.ts 의 gateOf 와 같은 셈. */
+function gateOf(html: string): Pick<QueuePeek, "waiting" | "count" | "limit" | "session" | "pageEta"> {
+  const hidden = (id: string) => new RegExp(`id="${id}"[^>]*value="([^"]*)"`).exec(html)?.[1] ?? "";
+  if (!hidden("tracer_domain")) return { waiting: false, count: 0, limit: 0, session: 0, pageEta: 0 };
+  const count = Number(hidden("waitCnt")) || 0;
+  const limit = Number(hidden("limitCnt")) || 0;
+  const session = Number(hidden("session_time_out")) || 0;
+  const waiting = hidden("isWait") === "T";
+  return { waiting, count, limit, session, pageEta: waiting && limit ? Math.round((session / limit) * count) : 0 };
+}
+
+/** 원본 product.ts 의 stamp — API 의 시각 칸 → YYYYMMDDHHmmss. */
+const stamp = (v: unknown): string => {
+  const digits = v == null ? "" : String(v).replace(/\D/g, "");
+  return digits ? digits.padEnd(14, "0").slice(0, 14) : "";
+};
+const kstNow = (): string => new Date(Date.now() + 9 * 3600_000).toISOString().replace(/\D/g, "").slice(0, 14);
+/** 원본 product.ts 의 kstMs — YYYYMMDDHHmmss (한국 시각) → epoch ms. */
+const kstMs = (at: string): number =>
+  new Date(`${at.slice(0, 4)}-${at.slice(4, 6)}-${at.slice(6, 8)}T${at.slice(8, 10)}:${at.slice(10, 12)}:${at.slice(12, 14)}+09:00`).getTime();
+
+/**
+ * 원본 product.ts 의 opensAtOf 와 같은 셈 — 판매 시작 전이면 그 시각, 예약배송이면 예약주문 시작. 예약주문 시작은
+ * 열리기 전에 null 로 와서 배송 안내 줄("26.10.10 10:00 ~ …")에서 읽는다. → ms / null
+ */
+function opensAtOf(data: JsonObject): number | null {
+  const now = kstNow();
+  const basic = (data["basicInfo"] ?? {}) as JsonObject;
+  const dlv = (data["dlvInfo"] ?? {}) as JsonObject;
+  const start = stamp(basic["slStrtDttm"]);
+  if (start && now < start) return kstMs(start);
+  if (dlv["dvRsvDvsCd"] === "RSV_DV") {
+    const from = stamp(dlv["rsvOdStrtDttm"]);
+    if (from) return now < from ? kstMs(from) : null;
+    const list = Array.isArray(dlv["dvList"]) ? (dlv["dvList"] as JsonObject[]) : [];
+    for (const one of list) {
+      const m = /(\d{2})\.(\d{2})\.(\d{2})\s+(\d{2}):(\d{2})/.exec(String(one?.["odTxt"] ?? ""));
+      if (!m) continue;
+      const at = `20${m[1]}${m[2]}${m[3]}${m[4]}${m[5]}00`;
+      return now < at ? kstMs(at) : null;
+    }
+  }
+  return null;
+}
+
+async function peekQueue(task: TaskDef): Promise<Omit<QueuePeek, "taskId" | "at">> {
+  const { sitm, page } = itemOf(task.url);
+  const api = `${STOCK_API}/${encodeURIComponent(sitm)}?sitmNo=${encodeURIComponent(sitm)}&isNotContainOptMapping=true`;
+  const [html, body] = await Promise.allSettled([peekGet(page), peekGet(api)]);
+  let opensAt: number | null = null;
+  if (body.status === "fulfilled") {
+    try {
+      opensAt = opensAtOf(((JSON.parse(body.value) as JsonObject)["data"] ?? {}) as JsonObject);
+    } catch {
+      opensAt = null; // 열리는 시각을 모를 뿐, 대기열은 따로 본다.
+    }
+  }
+  if (html.status === "rejected") {
+    return { waiting: false, count: 0, limit: 0, session: 0, pageEta: 0, opensAt, error: `상품 페이지를 못 받았습니다: ${(html.reason as Error).message}` };
+  }
+  return { ...gateOf(html.value), opensAt, error: null };
+}
 
 function targetOf(task: TaskDef): LotteTaskTarget {
   return {
@@ -166,18 +262,22 @@ function timingFields(task: TaskDef): LotteTimingFields {
   return out;
 }
 
-/** "어디까지" 마다 원본이 실제로 어디서 멈추나. 원본 order.ts 의 arrivalLine 과 같은 말이다. */
-function actionHints(seed: JsonObject, pin: string): Partial<Record<OrderAction, string>> {
+/** 씨앗 설정의 order_action. 원본 actionOf: 기본 submit, 모르는 값이면 open. */
+function defaultActionOf(seed: JsonObject): Exclude<OrderAction, ""> {
+  const raw = String(seed["order_action"] ?? "submit").toLowerCase();
+  return LOTTE_ACTIONS.find((a) => a === raw) ?? "open";
+}
+
+/** "어디까지" 마다 원본이 실제로 어디서 멈추나 (비밀번호가 있을 때 / 없을 때). 원본 order.ts 의 arrivalLine 과 같은 말이다. */
+function actionHints(seed: JsonObject, hasPin: boolean): Partial<Record<OrderAction, string>> {
   const hints: Partial<Record<OrderAction, string>> = {
     open: "주문서까지만 갑니다 — 결제는 사람이 누릅니다",
     agree: "주문서에서 필수 동의까지 하고 멈춥니다",
-    submit: pin
+    submit: hasPin
       ? "결제창까지 띄우고 간편결제 비밀번호까지 누릅니다 — 결제 확정은 사람이 누릅니다"
-      : "결제창까지 띄웁니다 — 결제 확정은 사람이 누릅니다",
+      : "결제창까지 띄웁니다 — 비밀번호와 결제 확정은 사람이 누릅니다",
   };
-  // 원본 actionOf: 기본 submit, 모르는 값이면 open.
-  const raw = String(seed["order_action"] ?? "submit").toLowerCase();
-  const dflt = LOTTE_ACTIONS.find((a) => a === raw) ?? "open";
+  const dflt = defaultActionOf(seed);
   hints[""] = `씨앗 설정(${dflt}) — ${hints[dflt]}`;
   return hints;
 }
@@ -244,20 +344,21 @@ export const lotte: SiteAdapter = {
     if (!existsSync(entry)) problems.push(`원본 빌드가 없습니다 (${entry}) — '원본 빌드' 를 누르세요.`);
     if (!webhook.url) warnings.push("디스코드 웹훅이 없습니다 — '결제해 주세요' 알림이 안 갑니다 (설정에서 공통 웹훅을 넣으세요).");
     if (!existsSync(s.seed)) notes.push("씨앗 설정이 없어 원본 기본값으로 돕니다.");
-    if (pin) notes.push("간편결제 비밀번호가 있습니다 — 원본이 결제창 안까지 넣습니다.");
+    if (pin) notes.push("원본 설정에 콘솔용 간편결제 비밀번호가 있습니다 — 원본을 직접 돌릴 때만 씁니다 (태스크는 프로필의 결제 비밀번호).");
     return {
       site: "lotte", entry, entryExists: existsSync(entry), seed: s.seed, seedExists: existsSync(s.seed),
       pin: { digits: pin.length, fromEnv, effect: PIN_EFFECT }, problems, warnings, notes,
-      actionHints: actionHints(readJson(s.seed) ?? {}, pin), timing: timingOf(readJson(s.seed) ?? {}), webhook: webhook.info,
+      actionHints: actionHints(readJson(s.seed) ?? {}, false), actionHintsWithPin: actionHints(readJson(s.seed) ?? {}, true),
+      defaultAction: defaultActionOf(readJson(s.seed) ?? {}), timing: timingOf(readJson(s.seed) ?? {}), webhook: webhook.info,
       prepare: "원본 빌드 (npm run build)",
     };
   },
 
   webhookUrl: (s, common) => webhookOf(s, common).url,
 
-  launch(task: TaskDef, home, s, common, profileDir) {
+  launch(task: TaskDef, home, s, common, profileDir, pin) {
     // 씨앗 설정을 그대로 베끼되 **대상만 이 태스크의 상품 하나로** 바꾼다. 쿠키·비밀번호는
-    // 비워 둔다 (환경변수로 간다). 산 기록은 건드리지 않는다 — 지우려면 resetState.
+    // 비워 둔다 (환경변수로 간다 — 비밀번호는 씨앗의 콘솔용이 아니라 프로필 것). 산 기록은 건드리지 않는다.
     mkdirSync(home, { recursive: true });
     const target = targetOf(task);
     const webhook = webhookOf(s, common).url;
@@ -289,7 +390,8 @@ export const lotte: SiteAdapter = {
       args,
       // AIO_TTY: 원본은 기다리는 동안 "품절 · 다음 확인 3초" 를 제자리에서 고쳐 쓰는데, 화면(TTY)일 때만
       // 찍는다 (ui.ts). 워커가 표준출력을 화면처럼 보이게 해서 그 줄을 받는다 — 모니터링 창의 회차·남은 초.
-      env: { LOTTEON_HOME: home, LOTTEON_COOKIE: cookie, LOTTEON_PG_PASSWORD: pinOf(s).pin, AIO_TTY: "1" },
+      // 비밀번호는 프로필 것, 없으면 빈 값 — 원본은 환경변수를 설정보다 먼저 보고, 태스크 설정의 pg_password 는 비었다.
+      env: { LOTTEON_HOME: home, LOTTEON_COOKIE: cookie, LOTTEON_PG_PASSWORD: pin, AIO_TTY: "1" },
       redirects: [],
     };
   },
@@ -342,6 +444,8 @@ export const lotte: SiteAdapter = {
     checkout: /직접 해주세요/,
     paid: /결제 완료 — /,
   },
+
+  peekQueue,
 
   session: {
     loginUrl: LOGIN_URL,

@@ -54,6 +54,12 @@ export function planDrop(d: DropSettings, now: number): { dropAt: number; startA
  */
 export const LOTTE_ACTIONS = ["open", "agree", "submit"] as const;
 export const NAVER_ACTIONS = ["open", "submit"] as const;
+export const BNKR_ACTIONS = ["open", "agree", "submit"] as const;
+/**
+ * 슈프림은 --action 이 없다 — 자동으로 어디까지 갈지는 원본 설정의 buy.click_pay 가 정한다
+ * (기본: 결제 버튼까지). 그래서 고를 것이 없다.
+ */
+export const SUPREME_ACTIONS = [] as const;
 
 export interface SiteSpec {
   id: SiteId;
@@ -81,10 +87,24 @@ export interface SiteSpec {
    */
   loginOptional: readonly TaskMode[];
   /**
-   * 한 프로필로 동시에 도는 태스크를 하나로 막나. 네이버는 로그인 세션째로 요청률을 보고 막으므로
-   * 한 세션에 태스크 하나만 둔다. 롯데는 쿠키를 태스크마다 환경변수로 넘겨 막을 것이 없다.
+   * 한 프로필로 동시에 도는 태스크·모니터를 하나로 막나. 지금은 두 사이트 다 막지 않는다.
+   *   롯데    쿠키를 태스크마다 환경변수로 넘긴다 — 원본은 크롬을 매번 빈 임시 프로필로 띄우고 쿠키를 심는다
+   *   네이버  워커마다 같은 세션 파일을 읽기만 한다 (원본은 --login 때만 쓴다). 로그인 세션째로 막는 요청률은
+   *           TaskManager·MonitorManager 가 프로필과 상관없이 사이트 합으로 막으므로 한 세션이 그 선을 넘을 수 없다
+   *           (2026-10-06 에 풀었다 — 그 전에는 true)
+   * 같은 프로필로 같은 상품을 둘 돌리면 같은 계정으로 주문서가 두 번 열린다.
    */
   oneTaskPerProfile: boolean;
+  /**
+   * 모니터(사지 않고 재고만 계속 보기)를 만들 수 있나. 모니터는 원본의 감시 루프를 dry-run 으로 돌리는데,
+   * 반다이남코 원본의 --dry-run 은 한 번 보고 끝나서 계속 볼 수 없다.
+   */
+  monitors: boolean;
+  /**
+   * 결제창에서 따로 로그인해야 하는 사이트. 태스크가 그 사이트 프로필을 하나 더 고르면 (TaskDef.payProfileId) 그
+   * 로그인을 원본에 넘긴다. 반다이남코 테스트 판은 네이버페이로 결제해서 네이버에 로그인해야 한다.
+   */
+  payProfileSite: SiteId | null;
 }
 
 export const SITES: Record<SiteId, SiteSpec> = {
@@ -102,6 +122,8 @@ export const SITES: Record<SiteId, SiteSpec> = {
     modes: ["watch", "drop", "once", "buy", "dry-run", "status"],
     loginOptional: ["status", "dry-run"],
     oneTaskPerProfile: false,
+    monitors: true,
+    payProfileSite: null,
   },
   naver: {
     id: "naver",
@@ -120,7 +142,53 @@ export const SITES: Record<SiteId, SiteSpec> = {
     liveFields: [],
     modes: ["watch", "once", "buy", "dry-run", "status"],
     loginOptional: [],
-    oneTaskPerProfile: true,
+    oneTaskPerProfile: false,
+    monitors: true,
+    payProfileSite: null,
+  },
+  bnkr: {
+    id: "bnkr",
+    name: "반다이남코",
+    tag: "BNKR",
+    actions: BNKR_ACTIONS,
+    // 네이버페이 테스트 판이다 — submit 은 결제창에서 네이버페이를 고르고, 비밀번호가 있으면 마지막 확인까지 간다.
+    actionLabel: { open: "주문서까지", agree: "필수 동의까지", submit: "결제 단계까지" },
+    placeholder: "https://www.bnkrmall.co.kr/goods/detail.do?gno=… 또는 상품번호(gno)",
+    urlError: "반다이남코코리아몰 상품 주소나 상품번호(gno)가 아닙니다.",
+    // 원본 site.ts 의 parseGno 는 숫자 네 자리 이상이면 받는다. 주소는 bnkrmall 것만.
+    isProductUrl: (url) => /bnkrmall\.co\.kr\/.*[?&]gno=\d{4,}|^\d{4,}$/.test(url.trim()),
+    productCode: (url) => /gno=(\d+)/.exec(url)?.[1] ?? url.trim(),
+    // 원본은 설정 파일이 바뀌면 바로 다시 읽는다 (watch.ts 의 reloadConfig). 옵션 상품은 원본이 담지 않는다.
+    liveFields: ["url", "ea", "max_price", "label"],
+    modes: ["watch", "once", "buy", "dry-run", "status"],
+    loginOptional: ["status", "dry-run"],
+    oneTaskPerProfile: false,
+    monitors: false,
+    payProfileSite: "naver",
+  },
+  supreme: {
+    id: "supreme",
+    name: "슈프림",
+    tag: "SUPREME",
+    // Shopify 체크아웃에는 "--action" 이 없다. 결제 버튼까지 갈지는 원본 설정이 정한다.
+    actions: SUPREME_ACTIONS,
+    actionLabel: { open: "—", agree: "—", submit: "—" },
+    placeholder: "https://shop.supreme.com/products/box-logo-tee  또는  #jackets +box +logo -hoodie",
+    urlError: "슈프림 상품 주소(shop.supreme.com/products/…) 또는 키워드(+box +logo -jacket, #카테고리)가 아닙니다.",
+    // Shopify 는 숫자 id 가 아니라 handle(주소의 마지막 조각)이다.
+    // **키워드 사양도 받는다** — 링크 없이 "+box +logo -jacket" 처럼 적으면 그 조건에 걸리는 것을 산다.
+    isProductUrl: (url) => /(?:^|\/\/)shop\.supreme\.com\/products\/[A-Za-z0-9_-]+/.test(url.trim()) || /(^|\s)[+#-]\S/.test(url.trim()),
+    productCode: (url) => /\/products\/([A-Za-z0-9_-]+)/.exec(url.trim())?.[1] ?? url.trim(),
+    // 원본은 설정 파일을 시작할 때 한 번 읽는다 — 돌던 중에 고치면 다시 시작해야 반영된다.
+    liveFields: [],
+    modes: ["watch", "once", "buy", "dry-run", "status", "drop"],
+    // 재고 조회·담기·결제가 전부 공개 스토어프론트에서 된다 (게스트 체크아웃).
+    loginOptional: ["watch", "once", "buy", "dry-run", "status", "drop"],
+    // 한 프로필(사람 확인 통과 쿠키)로 여러 태스크를 돌린다 (2026-10-12). 크롬 프로필은 태스크마다 따로고,
+    // 장바구니·체크아웃·대기열 쿠키는 원본이 심기 전에 빼서(config.ts sharedCookies) 태스크마다 장바구니가 따로다.
+    oneTaskPerProfile: false,
+    monitors: true,
+    payProfileSite: null,
   },
 };
 
@@ -143,10 +211,24 @@ export const PREPARE_LOG = "__prepare__";
 
 /** 태스크 칸의 이름. 돌던 중에 무엇이 바뀌었는지 로그에 적을 때 쓴다. */
 export const FIELD_LABEL: Record<keyof TaskDef, string> = {
-  id: "id", site: "사이트", profileId: "로그인 프로필", label: "이름", url: "상품 주소", option: "옵션", ea: "수량", max_price: "상한가",
+  id: "id", site: "사이트", profileId: "로그인 프로필", payProfileId: "결제 로그인 프로필", label: "이름", url: "상품 주소", option: "옵션", ea: "수량", max_price: "상한가",
   mode: "모드", action: "어디까지", checkIntervalMs: "확인 간격", maxRetries: "재시도", retryDelayMs: "재시도 간격",
   monitorDurationMs: "감시 시간", stopOnSuccess: "사고 나면", maxBuys: "최대 몇 번", dropSettings: "드랍 설정",
 };
+
+/** 결제 비밀번호 자릿수. 두 원본 다 6자리를 기준으로 자판을 누른다 (다르면 경고만 하고 누른다 — 우리는 받지 않는다). */
+export const PAYMENT_PIN_DIGITS = 6;
+
+/** 사는 모드 — 구매 자리까지 갈 수 있는 것. 재고만·드라이런은 사지 않는다. */
+const BUYING_MODES: readonly TaskMode[] = ["watch", "once", "buy", "drop"];
+
+/**
+ * 이 태스크에 결제 비밀번호가 쓰이나 — 사는 모드이고, "어디까지" 가 결제 단계(submit)일 때 (비웠으면 씨앗 설정의
+ * order_action 을 따른다). 아니면 원본이 결제창 앞에서 멈추므로 비밀번호가 쓰일 자리가 없다.
+ */
+export function pinMatters(task: Pick<TaskDef, "mode" | "action">, defaultAction: Exclude<OrderAction, "">): boolean {
+  return BUYING_MODES.includes(task.mode) && (task.action || defaultAction) === "submit";
+}
 
 /** 로그인·세션 확인의 출력이 쌓이는 가짜 태스크 id. 프로필마다 따로 쌓인다. */
 export const LOGIN_LOG_PREFIX = "__login__:";

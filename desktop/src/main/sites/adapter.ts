@@ -3,7 +3,9 @@
  * TaskManager 와 워커는 이 모양만 알고, 롯데·네이버가 어떻게 다른지는 모른다.
  */
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
-import type { CommonSettings, LoginStatus, MonitorDef, Profile, SiteId, SiteInfo, SiteSettings, TaskDef } from "../../shared/types.js";
+import type {
+  CommonSettings, LoginStatus, MonitorDef, Profile, QueuePeek, SiteId, SiteInfo, SiteSettings, TaskDef,
+} from "../../shared/types.js";
 
 /**
  * 모니터가 원본 설정의 max_buys_per_run 에 적는 값 — 사실상 끝없이. dry-run 도 "샀을 것" 을 산 것으로 세어 이 수에
@@ -62,9 +64,9 @@ export interface LegacyLogin {
 }
 
 /**
- * 간편결제 비밀번호. 원본의 --pin 은 **실행 옵션이 아니라 설정 파일에 적고 끝나는 명령**이다 —
- * 태스크를 띄울 때 붙이면 감시하지 않고 적기만 하고 끝난다. 그래서 적는 것은 원본 명령으로,
- * 태스크에는 지금처럼 환경변수로 넘긴다.
+ * **콘솔용** 간편결제 비밀번호 (원본 설정 파일에 사이트마다 하나). 원본을 직접 돌릴 때만 쓰인다 — 태스크는
+ * 프로필의 결제 비밀번호를 환경변수로 받는다 (SiteAdapter.launch 의 pin). 원본의 --pin 은 **실행 옵션이 아니라
+ * 설정 파일에 적고 끝나는 명령**이다 — 태스크를 띄울 때 붙이면 감시하지 않고 적기만 하고 끝난다.
  */
 export interface PinSpec {
   /** 지금 쓰이는 비밀번호 (환경변수 → 설정 파일, 원본과 같은 순서). */
@@ -172,8 +174,14 @@ export interface SiteAdapter {
   /**
    * 태스크 홈에 원본이 읽을 설정을 쓰고, 워커를 어떻게 띄울지 돌려준다.
    * @param profileDir 태스크가 고른 로그인 프로필의 폴더. 없으면 로그인 없이 (TaskManager 가 그래도 되는 모드인지 먼저 본다).
+   * @param pin 그 프로필의 결제 비밀번호. 없으면 "". **원본의 비밀번호 환경변수에 언제나 적는다** (빈 값도) — 사용자
+   *            환경변수나 원본 설정 파일의 콘솔용 비밀번호가 태스크로 새어 들지 않게. 태스크 홈 설정에는 적지 않는다.
+   * @param payProfileDir 결제창 로그인에 쓸 프로필(TaskDef.payProfileId)의 폴더. 없으면 null — 사람이 로그인한다.
    */
-  launch(task: TaskDef, home: string, s: SiteSettings, common: CommonSettings, profileDir: string | null): Launch;
+  launch(
+    task: TaskDef, home: string, s: SiteSettings, common: CommonSettings, profileDir: string | null, pin: string,
+    payProfileDir: string | null,
+  ): Launch;
   /** 산 기록을 지운다 (원본의 --reset 과 같은 일). */
   resetState(home: string): void;
   /**
@@ -217,6 +225,11 @@ export interface SiteAdapter {
   /** 구매 중인지 알아보는 법. 없으면 "멈춤 = Ctrl+C" 가 이미 구매를 기다려 준다는 뜻이다 (네이버). */
   busy?: BusySignal;
   progress: ProgressSignal;
+  /**
+   * 열리기 전 대기열을 바깥에서 본다 — 쿠키 없이 읽기만 하고 줄에 서지 않는다. 대기열이 있는 사이트(롯데)만.
+   * 태스크 창이 켰을 때만 main 이 몇 초마다 부른다. 못 읽으면 error 에 까닭.
+   */
+  peekQueue?(task: TaskDef): Promise<Omit<QueuePeek, "taskId" | "at">>;
 }
 
 /** 원본이 읽는 도중에 반쯤 쓰인 파일을 보지 않게, 옆에 쓰고 바꿔치기한다. */

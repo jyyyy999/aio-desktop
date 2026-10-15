@@ -135,6 +135,8 @@ export interface Config {
   prelogin_url: string;
   prelogin_marker: string;
   prelogin_wait_minutes: number;
+  /** 네이버 로그인 세션 파일 (네이버 판 --login 이 적는 Playwright 세션). 비우면 안 쓴다. */
+  naver_session: string;
   preheat_browser: boolean;
   meta_fresh_seconds: number;
   order_action: OrderAction;
@@ -200,6 +202,10 @@ export const DEFAULT_CONFIG: Config = {
   prelogin_url: NAVER_LOGIN_URL,
   prelogin_marker: "nidlogin",
   prelogin_wait_minutes: 5,
+  // 네이버 판(naver/ts --login)이 적어 둔 세션 파일. 적어 두면 크롬에 네이버 쿠키를 같이 심어 네이버페이 창이
+  // 로그인된 채로 열리고, 위의 사전 로그인을 사람이 하지 않아도 된다. 상대 경로는 이 설정 파일 옆에서 찾는다.
+  // 환경변수 BNKR_NAVER_SESSION 이 먼저다 (데스크톱 앱이 태스크마다 고른 네이버 프로필의 것을 넘긴다).
+  naver_session: "",
   preheat_browser: true,
   meta_fresh_seconds: 60,
   order_action: "submit",
@@ -293,6 +299,16 @@ export function cookieOf(cfg: Config): string {
  */
 export function passwordOf(cfg: Config): string {
   return (process.env["BNKR_PG_PASSWORD"] || cfg.pg_password || "").trim();
+}
+
+/**
+ * 네이버 로그인 세션 파일의 경로. 환경변수 BNKR_NAVER_SESSION 이 설정 파일보다 먼저다. 없으면 null.
+ * 파일이 있는지는 여기서 보지 않는다 — 없으면 쓰는 쪽(landing.ts)이 그렇다고 말한다.
+ */
+export function naverSessionOf(cfg: Config): string | null {
+  const value = (process.env["BNKR_NAVER_SESSION"] || cfg.naver_session || "").trim();
+  if (!value) return null;
+  return isAbsolute(value) ? value : join(BASE, value);
 }
 
 /**

@@ -2,7 +2,7 @@
  * 원본과 맞대 보는 곳. **런타임에는 없다** — `npm run typecheck` 때만 컴파일된다
  * (tsconfig.legacy.json, 아무것도 굽지 않는다).
  *
- * 원본은 경로 별칭(@lotte/* · @naver/*)으로 **타입만** 들인다. 원본을 실제로 들이는 것은
+ * 원본은 경로 별칭(@lotte/* · @naver/* · @bnkr/*)으로 **타입만** 들인다. 원본을 실제로 들이는 것은
  * 워커가 런타임에 **원래 자리에서** 한다 — 원본이 제 위치(import.meta)로 설정·세션 파일을
  * 찾고, 제 node_modules 에서 셀레니움·Playwright 를 찾기 때문이다. 별칭으로 묶어 옮기면
  * 그 둘이 다 어긋난다.
@@ -14,9 +14,15 @@ import type { ACTIONS as LotteActions, Config as LotteConfig, TargetSpec } from 
 import type { ACTIONS as NaverActions, BuyConfig as NaverBuyConfig, Config as NaverConfig } from "@naver/types.js";
 import type { LOGIN_PATH as LotteLoginPath } from "@lotte/http.js";
 import type { RATE_HARD_PER_MIN, RATE_WARN_PER_MIN } from "@naver/watch.js";
+import type { ACTIONS as BnkrActions } from "@bnkr/browser.js";
+import type { Config as BnkrConfig } from "@bnkr/config.js";
+import type { Target as BnkrTarget } from "@bnkr/targets.js";
+import type { BnkrTaskTarget, BnkrTimingFields } from "../main/sites/bnkr.js";
+import type { SupremeMonitorFields, SupremeTaskTarget, SupremeTimingFields } from "../main/sites/supreme.js";
+import type { BuyConfig, SupremeConfig, Target as SupremeTarget } from "@supreme/config.js";
 import type { LOTTE_LOGIN_PATH, LotteMonitorFields, LotteTaskTarget, LotteTimingFields } from "../main/sites/lotte.js";
 import type { NAVER_RATE, NaverMonitorFields } from "../main/sites/naver.js";
-import type { LOTTE_ACTIONS, NAVER_ACTIONS } from "../shared/sites.js";
+import type { BNKR_ACTIONS, LOTTE_ACTIONS, NAVER_ACTIONS } from "../shared/sites.js";
 
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 type Assert<T extends true> = T;
@@ -58,4 +64,23 @@ export type Contract = [
   Assert<NaverMonitorFields["top"]["categories"] extends NaverConfig["categories"] ? true : false>,
   Assert<Pick<NaverBuyConfig, "buyOnRestockOnly" | "stopAfterSuccess"> extends Record<string, boolean> ? true : false>,
   Assert<Pick<NaverBuyConfig, "maxBuysPerRun" | "cooldownMinutes"> extends Record<string, number> ? true : false>,
+  // 반다이남코: --action 값 = 원본 ACTIONS
+  Assert<Same<(typeof BNKR_ACTIONS)[number], (typeof BnkrActions)[number]>>,
+  // 대상 한 줄은 원본 parseTarget 이 읽어 Target 으로 만드는 칸이고 타입이 맞다 (label 은 원본에서 null 도 된다)
+  Assert<keyof BnkrTaskTarget extends keyof BnkrTarget ? true : false>,
+  Assert<BnkrTaskTarget extends Pick<BnkrTarget, keyof BnkrTaskTarget> ? true : false>,
+  // 간격·재시도: 우리가 적는 칸이 원본 Config 에 이름이 박힌 칸이고 타입이 맞다
+  Assert<keyof BnkrTimingFields extends KnownKeys<BnkrConfig> ? true : false>,
+  Assert<Required<BnkrTimingFields> extends Pick<BnkrConfig, keyof BnkrTimingFields> ? true : false>,
+  // 태스크 설정에 비우거나 적는 칸 (쿠키·비밀번호·웹훅·네이버 세션 경로·목록 훑기)
+  Assert<"cookie" | "pg_password" | "discord_webhook_url" | "naver_session" | "discover" | "targets" extends KnownKeys<BnkrConfig> ? true : false>,
+  Assert<Pick<BnkrConfig, "cookie" | "pg_password" | "discord_webhook_url" | "naver_session"> extends Record<string, string> ? true : false>,
+  // 슈프림: 우리가 태스크·모니터 홈에 적는 칸이 원본 설정에 이름이 박힌 칸이고 타입이 맞는가
+  Assert<keyof SupremeTaskTarget extends KnownKeys<SupremeTarget> ? true : false>,
+  Assert<Required<SupremeTaskTarget> extends Pick<SupremeTarget, keyof SupremeTaskTarget> ? true : false>,
+  Assert<keyof SupremeTimingFields extends KnownKeys<SupremeConfig> ? true : false>,
+  Assert<Pick<SupremeConfig, "check_interval_ms" | "max_retries" | "retry_delay_ms" | "monitor_duration_ms"> extends Record<string, number> ? true : false>,
+  Assert<keyof SupremeMonitorFields extends KnownKeys<SupremeConfig> ? true : false>,
+  Assert<keyof SupremeMonitorFields["buy"] extends KnownKeys<BuyConfig> ? true : false>,
+  Assert<Pick<SupremeConfig, "targets" | "cookie" | "discord_webhook_url"> extends Pick<SupremeConfig, "targets"> ? true : false>,
 ];

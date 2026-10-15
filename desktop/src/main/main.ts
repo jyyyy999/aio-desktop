@@ -2,19 +2,22 @@
  * Electron main. 창을 띄우고, 렌더러의 요청을 TaskManager 로 넘기고, 워커에서 올라온
  * 상태·로그를 렌더러로 흘린다. 여기에 태스크 상태를 따로 들고 있지 않는다.
  */
-import { app, BrowserWindow, dialog, ipcMain, screen, session, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, screen, session, shell } from "electron";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { SITE_IDS, SITES, TIMING_BLANK } from "../shared/sites.js";
 import type {
-  LogLine, MonitorEntry, MonitorFound, MonitorInput, Profile, ProfilePatch, Settings, SiteId, SiteSettings, TaskDef, TaskRuntime,
+  LogLine, MonitorEntry, MonitorFound, MonitorInput, Profile, ProfilePatch, QueuePeek, Settings, SiteId, SiteSettings, TaskDef,
+  TaskRuntime,
 } from "../shared/types.js";
 import { MonitorManager } from "./monitorManager.js";
 import { MonitorStore } from "./monitorStore.js";
-import { SessionManager, type LoginWindows } from "./sessions.js";
+import * as supremeOrder from "./supremeOrder.js";
+import { SessionManager, type LoginWindows, type PinVault } from "./sessions.js";
 import { isDiscordWebhook, sendFound, sendTest } from "./webhook.js";
 import { ADAPTERS } from "./sites/index.js";
+import { QueueWatch } from "./queueWatch.js";
 import { TaskManager } from "./taskManager.js";
 
 /** 앱이 aio/desktop 에 있으니 롯데 원본은 옆집 aio/node, 네이버 원본은 ../naver/ts 에 있다. */
@@ -55,6 +58,8 @@ let manager: TaskManager;
 let sessions: SessionManager;
 /** 모니터 — 사지 않고 재고만 본다. 태스크와 따로 돈다. */
 let monitors: MonitorManager;
+/** 열리기 전 대기열 보기 — 태스크 창이 켠 동안만 돈다. */
+let queueWatch: QueueWatch | undefined;
 
 const RENDERER = join(__dirname, "..", "renderer", "index.html");
 
@@ -105,6 +110,8 @@ function openTaskWatch(id: string): void {
   taskWatches.set(id, watch);
   watch.on("closed", () => {
     if (taskWatches.get(id) === watch) taskWatches.delete(id);
+    // 대기열 보기는 태스크 창이 켠 것이다 — 창이 없으면 볼 사람도 없다.
+    queueWatch?.stop(id);
   });
 }
 
@@ -191,7 +198,7 @@ function closeMonitorPopupsForQuit(): void {
 
 /**
  * 모니터 → 구매 전환. 사람이 "구매 전환" 을 눌렀을 때만 온다 (저절로는 안 한다).
- *   1. 모니터를 멈추고 끝나기를 기다린다 — 네이버는 한 프로필로 하나만 돌기 때문에 먼저 비켜야 한다
+ *   1. 모니터를 멈추고 끝나기를 기다린다 — 감시는 할 일을 마쳤고, 구매 태스크와 요청률을 나눠 쓰지 않게 먼저 비킨다
  *   2. 같은 대상·같은 프로필로 지금 구매(buy — 원본 --buy URL) 태스크를 만든다. "지켜보기" 는 재입고 순간에만
  *      사서, 이미 팔고 있는 물건을 사지 않는다
  *   3. 태스크를 띄운다. 로그인은 그 프로필의 것 그대로 (쿠키·세션)
@@ -351,6 +358,13 @@ const openLoginWindow: LoginWindows["open"] = (title, partition, spec, note) => 
   return { done, cancel: () => finish(null) };
 };
 
+/** 프로필의 결제 비밀번호를 잠그는 것. 윈도에서는 DPAPI — 이 PC 의 이 윈도 계정에서만 풀린다. */
+const pinVault: PinVault = {
+  available: () => safeStorage.isEncryptionAvailable(),
+  seal: (text) => safeStorage.encryptString(text),
+  open: (data) => safeStorage.decryptString(data),
+};
+
 const loginWindows: LoginWindows = {
   open: openLoginWindow,
   forget: (partition) => session.fromPartition(partition).clearStorageData(),
@@ -436,12 +450,20 @@ function createWindow(): void {
     // 메인 창이 닫히면 앱이 끝나는 것이라 모니터 창의 popupOpen 은 닫기 전 값으로 남긴다.
     sessions?.cancelAll();
     closeTaskWatches();
+    queueWatch?.stopAll();
     closeMonitorPopupsForQuit();
   });
 }
 
 function registerIpc(): void {
   const m = () => manager;
+  ipcMain.handle("aio:supremeOrderGet", () => supremeOrder.stateOf());
+  ipcMain.handle("aio:supremeOrderSave", (_e, input: Parameters<typeof supremeOrder.saveOrder>[0]) => supremeOrder.saveOrder(input));
+  // 드랍 설정은 **씨앗 설정 파일**(sites.supreme.seed)의 drop 칸에 적는다.
+  ipcMain.handle("aio:supremeDropGet", () => supremeOrder.readDrop(loadSettings().sites.supreme.seed));
+  ipcMain.handle("aio:supremeDropSave", (_e, drop: Parameters<typeof supremeOrder.saveDrop>[1]) =>
+    supremeOrder.saveDrop(loadSettings().sites.supreme.seed, drop),
+  );
   ipcMain.handle("aio:listTasks", () => m().list());
   ipcMain.handle("aio:saveTask", (_e, t: TaskDef) => m().save(t));
   ipcMain.handle("aio:deleteTask", (_e, id: string) => m().remove(id));
@@ -452,6 +474,20 @@ function registerIpc(): void {
   ipcMain.handle("aio:startAll", () => m().startAll());
   ipcMain.handle("aio:stopAll", () => m().stopAll());
   ipcMain.handle("aio:resetState", (_e, id: string) => m().resetState(id));
+  // 렌더러의 confirm()·alert() 대신 (AioApi.ask 주석). 물은 창(메인·태스크 창·모니터 창)에 붙여 띄운다.
+  ipcMain.handle("aio:ask", async (e, message: string) => {
+    const opts: Electron.MessageBoxOptions = {
+      type: "question", title: "AIO Task Manager", message: String(message), buttons: ["확인", "취소"], defaultId: 0, cancelId: 1,
+    };
+    const win = BrowserWindow.fromWebContents(e.sender);
+    const { response } = await (win ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts));
+    return response === 0;
+  });
+  ipcMain.handle("aio:tell", async (e, message: string) => {
+    const opts: Electron.MessageBoxOptions = { type: "warning", title: "AIO Task Manager", message: String(message), buttons: ["확인"] };
+    const win = BrowserWindow.fromWebContents(e.sender);
+    await (win ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts));
+  });
   ipcMain.handle("aio:openHome", async (_e, id: string) => {
     const home = m().homeOf(id);
     mkdirSync(home, { recursive: true });
@@ -495,6 +531,9 @@ function registerIpc(): void {
     await sessions.setPin(site, pin);
     return m().sitesInfo();
   });
+  // 프로필의 결제 비밀번호. 값은 화면 → 여기 → 암호화해서 파일로만 간다. 돌려주는 것은 Profile (있나 없나만).
+  ipcMain.handle("aio:setProfilePin", (_e, id: string, pin: string) => sessions.setPaymentPin(id, String(pin ?? "")));
+  ipcMain.handle("aio:clearProfilePin", (_e, id: string) => sessions.clearPaymentPin(id));
   ipcMain.handle("aio:testWebhook", (_e, url: string) =>
     isDiscordWebhook(url)
       ? sendTest(url)
@@ -502,6 +541,7 @@ function registerIpc(): void {
   ipcMain.handle("aio:openTaskWatch", (_e, id: string) => openTaskWatch(id));
   ipcMain.handle("aio:closeTaskWatch", (_e, id: string) => closeTaskWatch(id));
   ipcMain.handle("aio:captureTaskWatch", (_e, id: string) => captureTaskWatch(id));
+  ipcMain.handle("aio:watchQueue", (_e, id: string, on: boolean) => queueWatch!.set(id, !!on));
   // 모니터 — 채널은 monitor:* (태스크와 가른다)
   const entryOf = (id: string) => {
     const e = monitors.list().find((one) => one.def.id === id);
@@ -535,6 +575,7 @@ app.whenReady().then(() => {
     join(__dirname, "..", "worker", "worker.js"),
     loadSettings(),
     (id) => sessions.ref(id),
+    (profileId) => sessions.paymentPin(profileId),
     // 네이버 요청률 합·한 프로필에 하나 — 도는 모니터도 같이 센다.
     () => monitors.liveUses(),
   );
@@ -543,6 +584,9 @@ app.whenReady().then(() => {
     toTaskWatch(rt.id, "aio:runtime", rt);
   });
   manager.on("log", queueLog);
+  // 열리기 전 대기열 보기 — 그 태스크의 태스크 창에만 보낸다 (켠 것도 그 창이다).
+  queueWatch = new QueueWatch((id) => manager.list().find((t) => t.id === id));
+  queueWatch.on("peek", (p: QueuePeek) => toTaskWatch(p.taskId, "aio:queuePeek", p));
   manager.on("tasks", (tasks: TaskDef[]) => {
     win?.webContents.send("aio:tasks", tasks);
     for (const id of [...taskWatches.keys()]) {
@@ -557,6 +601,7 @@ app.whenReady().then(() => {
     (site) => manager.settingsOf(site),
     loginWindows,
     (id, stream, text) => manager.appendLog(id, stream, text),
+    pinVault,
   );
   sessions.on("profile", (p: Profile) => {
     win?.webContents.send("aio:profile", p);

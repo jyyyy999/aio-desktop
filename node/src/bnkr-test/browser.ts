@@ -793,20 +793,52 @@ function parseCookie(raw: string): Record<string, string> {
 }
 
 /**
- * 빌려온 쿠키를 크롬에 심는다. → 심은 개수
+ * CDP Network.setCookies 가 받는 쿠키 한 개. 네이버 판의 세션 파일(Playwright storageState)의 cookies 가
+ * 이 모양 그대로다 — sameSite 도 같은 글자(Strict·Lax·None)를 쓴다.
+ */
+export interface CdpCookie {
+  name: string;
+  value: string;
+  domain: string;
+  path?: string;
+  secure?: boolean;
+  httpOnly?: boolean;
+  sameSite?: string;
+  /** 초 단위 유닉스 시각. 없으면 세션 쿠키. */
+  expires?: number;
+}
+
+/**
+ * 빌려온 쿠키를 크롬에 심는다. → 심은 개수 (bnkr 것만 센다)
  *
  * CDP 로 한 번에 심는다. 하나씩 넣는 길은 그 도메인에 이미 들어가 있어야 해서, 홈을
  * 한 장 받고(무거운 페이지다) 서른 번을 왕복해야 했다. CDP 는 아직 아무 데도 안 갔어도
  * 도메인만 적어 주면 심어 주므로, 곧장 주문서로 갈 수 있다.
+ *
+ * extra 는 다른 사이트의 쿠키다 (네이버페이 창이 로그인된 채로 열리게 하는 네이버 세션). 같이 심는다.
  */
-async function inject(chromeBox: Chrome, cookie: string): Promise<number> {
+async function inject(chromeBox: Chrome, cookie: string, extra: CdpCookie[] = []): Promise<number> {
   const jar = parseCookie(cookie);
   const names = Object.keys(jar);
   if (!names.length) return 0;
 
-  const cookies = names.map((name) => ({
+  const own: CdpCookie[] = names.map((name) => ({
     name, value: jar[name]!, domain: COOKIE_DOMAIN, path: "/", secure: true,
   }));
+  const planted = await plantCookies(chromeBox, [...own, ...extra]);
+  if (planted && extra.length) log.debug(`네이버 쿠키 ${extra.length}개를 같이 심었습니다.`);
+  return planted ? own.length : 0;
+}
+
+/**
+ * 쿠키를 심는다. → 심은 개수
+ *
+ * 한 번에 안 되면 하나씩 넣는다. 값에 따옴표나 중괄호가 든 쿠키(_fcOM 같은 추적 쿠키)는
+ * 거절당할 수 있다. 신분을 지는 건 bnkr 은 MEMBER_TOKEN 과 ASI, 네이버는 NID_AUT 와 NID_SES 뿐이라
+ * 그런 건 빠져도 상관없다.
+ */
+export async function plantCookies(chromeBox: Chrome, cookies: CdpCookie[]): Promise<number> {
+  if (!cookies.length) return 0;
   const driver = chromeBox.driver as WebDriver & {
     sendDevToolsCommand(cmd: string, params: object): Promise<void>;
   };
@@ -818,8 +850,6 @@ async function inject(chromeBox: Chrome, cookie: string): Promise<number> {
     log.debug(`쿠키를 한 번에 심지 못했습니다 (${(e as Error).message}). 하나씩 넣습니다.`);
   }
 
-  // 값에 따옴표나 중괄호가 든 쿠키(_fcOM 같은 추적 쿠키)는 거절당할 수 있다. 신분을
-  // 지는 건 MEMBER_TOKEN 과 ASI 뿐이라 그런 건 빠져도 상관없다.
   let planted = 0;
   const rejected: string[] = [];
   for (const one of cookies) {
@@ -2137,6 +2167,24 @@ export async function waitLogin(
   return false;
 }
 
+/**
+ * 이 크롬이 네이버에 로그인돼 있는가. 심은 네이버 세션이 살아 있는지 볼 때 쓴다.
+ *
+ * 로그인해야 볼 수 있는 내 정보 페이지를 연다. 로그아웃이면 네이버가 로그인 페이지(nidlogin)로
+ * 보낸다 — 2026-10-07 에 쿠키 없이 물어 302 → nidlogin.login 을 확인했다. 로그인 페이지 자체는
+ * 로그인돼 있어도 200 이라 그것으로는 알 수 없다.
+ */
+export async function naverLoggedIn(chromeBox: Chrome): Promise<boolean> {
+  const driver = chromeBox.driver;
+  try {
+    await driver.get("https://nid.naver.com/user2/help/myInfo");
+    return !(await driver.getCurrentUrl()).includes("nidlogin");
+  } catch (e) {
+    log.debug(`네이버 로그인을 확인하지 못했습니다: ${(e as Error).message}`);
+    return false;
+  }
+}
+
 /** 미리 띄워 둔 창이 아직 살아 있는가. 사람이 닫았을 수 있다. */
 export async function alive(chromeBox: Chrome | null | undefined): Promise<boolean> {
   if (!chromeBox) return false;
@@ -2168,6 +2216,8 @@ export async function openOrder(
   opts: {
     action?: Action; headless?: boolean; timeout?: number; chrome?: Chrome | null;
     profile?: string | null; offscreen?: boolean;
+    /** 같이 심을 다른 사이트 쿠키 (네이버 세션). */
+    extraCookies?: CdpCookie[];
   } = {},
 ): Promise<Opened> {
   const action = opts.action ?? "open";
@@ -2184,7 +2234,7 @@ export async function openOrder(
   try {
     // 홈을 거치지 않는다. CDP 로 심으면 아직 아무 데도 안 갔어도 되고, 그러면 손님용
     // 세션이 생길 일도 없어 지울 것도 없다. 곧장 주문서로 간다.
-    const planted = await inject(box, cookie);
+    const planted = await inject(box, cookie, opts.extraCookies ?? []);
     if (!planted) throw new BrowserError("심을 쿠키가 없습니다");
     log.debug(`크롬에 쿠키 ${planted}개를 심었습니다.`);
 

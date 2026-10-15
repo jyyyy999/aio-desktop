@@ -3,7 +3,7 @@
  * sandbox 에서 돌므로 electron 말고는 들이지 않는다 (types 는 컴파일 때 지워진다).
  */
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import type { AioApi, LogLine, MonitorEntry, MonitorFound, Profile, TaskDef, TaskRuntime } from "../shared/types.js";
+import type { AioApi, LogLine, MonitorEntry, MonitorFound, Profile, QueuePeek, TaskDef, TaskRuntime } from "../shared/types.js";
 
 const call = (channel: string, ...args: unknown[]) => ipcRenderer.invoke(`aio:${channel}`, ...args);
 /** 모니터는 채널을 monitor:* 로 가른다. */
@@ -36,6 +36,12 @@ const api: AioApi = {
     onRemoved: (cb) => listen<string>("monitor:removed", cb),
     onSwitched: (cb) => listen<{ monitorId: string; taskId: string }>("monitor:switched", cb),
   },
+  supremeOrder: {
+    get: () => call("supremeOrderGet"),
+    save: (input) => call("supremeOrderSave", input),
+    getDrop: () => call("supremeDropGet"),
+    saveDrop: (drop) => call("supremeDropSave", drop),
+  },
   listTasks: () => call("listTasks"),
   saveTask: (t) => call("saveTask", t),
   deleteTask: (id) => call("deleteTask", id),
@@ -47,6 +53,8 @@ const api: AioApi = {
   stopAll: () => call("stopAll"),
   resetState: (id) => call("resetState", id),
   openHome: (id) => call("openHome", id),
+  ask: (message) => call("ask", message),
+  tell: (message) => call("tell", message),
   getSettings: () => call("getSettings"),
   saveSettings: (s) => call("saveSettings", s),
   sitesInfo: () => call("sitesInfo"),
@@ -60,10 +68,14 @@ const api: AioApi = {
   logoutProfile: (id) => call("logoutProfile", id),
   verifyProfile: (id) => call("verifyProfile", id),
   setPin: (site, pin) => call("setPin", site, pin),
+  setProfilePin: (id, pin) => call("setProfilePin", id, pin),
+  clearProfilePin: (id) => call("clearProfilePin", id),
   testWebhook: (url) => call("testWebhook", url),
   openTaskWatch: (id) => call("openTaskWatch", id),
   closeTaskWatch: (id) => call("closeTaskWatch", id),
   captureTaskWatch: (id) => call("captureTaskWatch", id),
+  watchQueue: (id, on) => call("watchQueue", id, on),
+  onQueuePeek: (cb) => listen<QueuePeek>("aio:queuePeek", cb),
   onRuntime: (cb) => listen<TaskRuntime>("aio:runtime", cb),
   onLogs: (cb) => listen<LogLine[]>("aio:logs", cb),
   onProfile: (cb) => listen<Profile>("aio:profile", cb),
