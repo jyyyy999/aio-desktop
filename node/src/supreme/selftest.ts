@@ -74,6 +74,24 @@ function pureTests(): void {
   ok("품절 표시", large?.available === false);
   ok("상품은 재고 있음", product.available === true);
 
+  // available 이 없고 available_for_sale / inventory_quantity 로만 주는 판 (Storefront JSON 계열)
+  const afs = normalizeProduct({
+    ...RAW,
+    variants: [
+      { id: 60011, title: "Black / Large", option1: "Black", option2: "Large", available_for_sale: true, price: 4800 },
+      { id: 60012, title: "Black / Medium", option1: "Black", option2: "Medium", available_for_sale: false, price: 4800 },
+    ],
+  });
+  ok("available_for_sale 로 재고 판정", afs.variants.find((v) => v.id === "60011")?.available === true && afs.variants.find((v) => v.id === "60012")?.available === false);
+  const qty = normalizeProduct({
+    ...RAW,
+    variants: [
+      { id: 60021, title: "Black / Large", option1: "Black", option2: "Large", inventory_quantity: 3, price: 4800 },
+      { id: 60022, title: "Black / Medium", option1: "Black", option2: "Medium", inventory_quantity: 0, price: 4800 },
+    ],
+  });
+  ok("inventory_quantity 로 재고 판정", qty.variants.find((v) => v.id === "60021")?.available === true && qty.variants.find((v) => v.id === "60022")?.available === false);
+
   console.log("\n== 발견(diff) ==");
   const snap = buildSnapshot([product]);
   const first = diff(null, [product], rule());
@@ -110,6 +128,10 @@ function pureTests(): void {
   ok("M = medium", sizeEquals("M", "medium"));
   ok("L ≠ XL", sizeEquals("L", "XL") === false);
   ok("270 ≠ 280", sizeEquals("270", "280") === false);
+  ok("2XL = XXL", sizeEquals("2XL", "XXL"));
+  ok("2xl = xxlarge", sizeEquals("2xl", "xxlarge"));
+  ok("3XL = XXXL", sizeEquals("3XL", "XXXL"));
+  ok("2XS = XXS", sizeEquals("2XS", "XXS"));
   ok("L 로 Large 를 고른다", pickVariant(product, buyRule({ sizePriority: ["L"] }), rule()).variant?.size === "Large");
   const noLarge = {
     ...product,

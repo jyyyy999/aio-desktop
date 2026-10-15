@@ -65,6 +65,19 @@ const num = (v: unknown): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
+/**
+ * variant 재고 여부. 표준은 available(불리언)이지만, 어떤 Shopify 엔드포인트는
+ * available_for_sale 이나 inventory_quantity/quantityAvailable 로만 준다. 명시 불리언이 있으면
+ * 그걸, 수량이 있으면 0 초과를, 둘 다 없으면 **살 수 있다고** 본다 (기존 available !== false 와 같은 보수성).
+ */
+function variantAvailable(v: RawVariant): boolean {
+  if (typeof v.available === "boolean") return v.available;
+  if (typeof v.available_for_sale === "boolean") return v.available_for_sale;
+  const q = v.inventory_quantity ?? v.quantityAvailable;
+  if (q !== undefined && q !== null) return num(q) > 0;
+  return true;
+}
+
 interface RawVariant {
   id?: unknown;
   title?: unknown;
@@ -73,6 +86,11 @@ interface RawVariant {
   option3?: unknown;
   options?: unknown;
   available?: unknown;
+  /** Shopify Storefront·페이지 JSON 계열은 available 대신 이것들로만 주는 판이 있다 */
+  available_for_sale?: unknown;
+  inventory_quantity?: unknown;
+  quantityAvailable?: unknown;
+  inventory_management?: unknown;
   price?: unknown;
   sku?: unknown;
 }
@@ -148,7 +166,7 @@ export function normalizeProduct(raw: RawProduct, priceDivisor = MINOR_UNITS): P
   const list = Array.isArray(raw.variants) ? (raw.variants as RawVariant[]) : [];
   const variants: Variant[] = list.map((v) => {
     const attrs = attrsOf(v, names);
-    const available = v.available !== false;
+    const available = variantAvailable(v);
     return {
       id: str(v.id),
       title: str(v.title),
@@ -359,7 +377,9 @@ export function pageProductsScript(collection: string, expectedOrigin = ""): str
       tags: p.style || "", options: p.options || [],
       variants: (p.variants || []).map((v) => ({
         id: v.id, title: v.title, option1: v.option1, option2: v.option2, option3: v.option3,
-        options: v.options, available: v.available, price: v.price, sku: v.sku,
+        options: v.options, available: v.available, available_for_sale: v.available_for_sale,
+        inventory_quantity: v.inventory_quantity, quantityAvailable: v.quantityAvailable,
+        inventory_management: v.inventory_management, price: v.price, sku: v.sku,
       })),
     }));
     return { ok: true, status: res.status, found: true, total: data.allProductsCount || products.length, products };
@@ -386,7 +406,9 @@ export function compactPageProducts(data: { products?: unknown[]; allProductsCou
     options: Array.isArray(p["options"]) ? p["options"] : [],
     variants: (Array.isArray(p["variants"]) ? (p["variants"] as Record<string, unknown>[]) : []).map((v) => ({
       id: v["id"], title: v["title"], option1: v["option1"], option2: v["option2"], option3: v["option3"],
-      options: v["options"], available: v["available"], price: v["price"], sku: v["sku"],
+      options: v["options"], available: v["available"], available_for_sale: v["available_for_sale"],
+      inventory_quantity: v["inventory_quantity"], quantityAvailable: v["quantityAvailable"],
+      inventory_management: v["inventory_management"], price: v["price"], sku: v["sku"],
     })),
   }));
   return { total: num(data.allProductsCount) || products.length, products };
@@ -480,7 +502,15 @@ export function colorFromProductHtml(html: string): string {
 
 export function productPageScript(handle: string): string {
   const path = `/products/${handle}`;
-  const json = JSON.stringify(handle);
+  // 테마가 바뀌어도 깨지지 않게 — 슈프림 product-<handle>-json 부터 테마별 product-json 까지 순서대로.
+  // 빈 껍데기 스크립트가 먼저 나와도 **variants 또는 id 를 가진 첫 JSON** 만 쓴다.
+  const candidates = [
+    '<script[^>]*id="product-[^"]*-json"[^>]*>([\\s\\S]*?)</script>',
+    '<script[^>]*type="application/json"[^>]*data-product-json[^>]*>([\\s\\S]*?)</script>',
+    '<script[^>]*class="[^"]*product-json[^"]*"[^>]*>([\\s\\S]*?)</script>',
+    '<script[^>]*class="[^"]*js-product-json[^"]*"[^>]*>([\\s\\S]*?)</script>',
+  ];
+  const patterns = JSON.stringify(candidates);
   return `(async () => {
   try {
     const res = await fetch(${JSON.stringify(path)}, { credentials: "same-origin" });
@@ -488,13 +518,18 @@ export function productPageScript(handle: string): string {
     const text = await res.text();
     const cm = ${NOJS_COLOR_RE.toString()}.exec(text);
     const color = cm && cm[1] ? cm[1].replace(/<[^>]+>/g, "").replace(/\\s+/g, " ").trim().slice(0, 60) : "";
-    const m = text.match(/<script[^>]*id="product-[^"]*-json"[^>]*>([\\s\\S]*?)<\\/script>/);
-    if (!m || !m[1]) return { ok: false, status: res.status, product: null, reason: "product-…-json 스크립트 없음 (" + text.length + "바이트)" };
-    try {
-      return { ok: true, status: res.status, product: JSON.parse(m[1]), color };
-    } catch (e) {
-      return { ok: false, status: res.status, product: null, reason: "JSON 해석 실패: " + String((e && e.message) || e) };
+    const patterns = ${patterns};
+    let saw = false;
+    for (const src of patterns) {
+      const m = new RegExp(src).exec(text);
+      if (!m || !m[1]) continue;
+      saw = true;
+      try {
+        const data = JSON.parse(m[1]);
+        if (data && (Array.isArray(data.variants) || data.id != null)) return { ok: true, status: res.status, product: data, color };
+      } catch (e) { /* 이 후보는 JSON 이 아니다 — 다음 후보로 */ }
     }
+    return { ok: false, status: res.status, product: null, reason: saw ? "product JSON 해석 실패" : "product JSON 스크립트 없음 (" + text.length + "바이트)" };
   } catch (e) {
     return { ok: false, status: 0, product: null, reason: String((e && e.message) || e) };
   }

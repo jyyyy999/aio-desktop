@@ -198,6 +198,8 @@ const SIZE_ALIASES: Record<string, string> = {
   small: "s", medium: "m", large: "l",
   xlarge: "xl", xxlarge: "xxl", xxxlarge: "xxxl",
   "x-large": "xl", "xx-large": "xxl", "xxx-large": "xxxl",
+  // 숫자 표기 — "2XL" 은 사이트가 "XXL" 로 쓸 때가 있다 (반대로도 마찬가지).
+  "2xs": "xxs", "2xl": "xxl", "3xl": "xxxl",
   onesize: "os", os: "os", free: "os",
 };
 
