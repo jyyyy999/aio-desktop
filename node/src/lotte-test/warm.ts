@@ -9,6 +9,10 @@
  * 대기열(TRACER, tracer.ts)이 서 있었다. 그날 산 사람들은 10시 전에 줄을 뚫어 놓고 상품
  * 페이지에서 10시에 새로 고쳤다 (사용자가 들은 말) — 통과한 자리가 새로 고침에도 남는다.
  *
+ * **고침 (2026-10-17):** 남기는 남되 ~30초뿐이다 (10-10 실측). 그래서 기본은 queue_timing "late" — 열리기
+ * 30초 안쪽 통과를 노리고(queue_pass_lead_seconds), 기다릴 어림은 실측 속도(queue_drain_per_second)로 센다.
+ * 켤 때 이미 대기열이 서 있으면 상품 페이지를 미리 받지 않는다 (launchUnlessQueued). 아래 3 의 셈은 "early" 것이다.
+ *
  *   1. 감시가 API 에서 열리는 시각을 읽는다 (product.ts 의 opens_at — 예약주문기간·판매 시작).
  *   2. 열리기 warm_window_minutes 분 전부터 상품 페이지를 HTTP 로 받아 대기열 길이를 본다.
  *      쿠키 없이 받는다 — 읽기만 하고 줄에 서지는 않는다 (줄에 서는 것은 화면 스크립트가
@@ -37,7 +41,7 @@ import { cookieOf, type Config } from "./config.js";
 import { getPage, newSession } from "./http.js";
 import { kstMs } from "./product.js";
 import { productUrl, type Target } from "./targets.js";
-import { gateOf, waitTracer, type Gate } from "./tracer.js";
+import { gateOf, waitTracer, type Gate, type TracerState } from "./tracer.js";
 
 interface Warm {
   /** 띄운 창. 띄우는 중이면 null. */
@@ -46,7 +50,15 @@ interface Warm {
   ready: Promise<string | null>;
   /** 줄 서기를 계획해 둔 열리는 시각 (epoch ms). 같은 시각을 두 번 계획하지 않는다. */
   planned: number | null;
+  /** 켤 때 대기열이 서 있어서 상품 페이지를 미리 받지 않았다 (queue_timing "late"). 창은 planner 가 띄운다. */
+  deferred?: boolean;
 }
+
+/** "late" 인가 (기본). "early" 는 예전 방식 — warm_lead_seconds 전 통과를 노린다. */
+const lateTiming = (cfg: Config): boolean => (cfg.queue_timing ?? "late") !== "early";
+
+/** 통과한 자리의 수명(초) — 대기 화면의 session_time_out. 못 읽으면 10-10 에 본 값. */
+const PASS_SECONDS = 30;
 
 const WARM = new Map<string, Warm>();
 /** 상품마다 열리는 시각. 넘겨받은 뒤에도 남겨 둔다 — 열리는 순간 둘레에서 조회를 빠르게 한다. */
@@ -79,7 +91,10 @@ export function planWarm(cfg: Config, target: Target, opensAt: string, dryRun: b
 
   let w = WARM.get(target.key);
   if (!w) {
-    w = launch(cfg, target, "크롬을 띄워 상품 페이지에 세워 둡니다 — 열리면 새로 고침만 하고 바로 누릅니다");
+    const why = "크롬을 띄워 상품 페이지에 세워 둡니다 — 열리면 새로 고침만 하고 바로 누릅니다";
+    w = lateTiming(cfg) && Number.isFinite(at) && at > Date.now()
+      ? launchUnlessQueued(cfg, target, why)
+      : launch(cfg, target, why);
     WARM.set(target.key, w);
   }
 
@@ -96,7 +111,7 @@ export function planWarm(cfg: Config, target: Target, opensAt: string, dryRun: b
 /** 창을 띄워 상품 페이지에 세운다. 대기 화면이면 그 줄에 선다. */
 function launch(
   cfg: Config, target: Target, why: string,
-  budget = cfg.queue_wait_seconds ?? 300, opensAt: number | null = null,
+  budget = cfg.queue_wait_seconds ?? 300, opensAt: number | null = null, passSeconds = PASS_SECONDS,
 ): Warm {
   const w: Warm = { box: null, ready: Promise.resolve(null), planned: null };
   sayStep(`[${target.key}] ${why}`);
@@ -108,7 +123,7 @@ function launch(
       log.warn(`[${target.key}] 띄운 크롬이 상품 페이지에 못 섰습니다 — ${reason}`);
       return reason;
     }
-    return stand(target.key, box, budget, opensAt);
+    return stand(target.key, box, budget, opensAt, passSeconds);
   }).catch((e) => {
     log.warn(`[${target.key}] 크롬을 띄우지 못했습니다 — ${(e as Error).message}`);
     return (e as Error).message;
@@ -117,40 +132,98 @@ function launch(
 }
 
 /**
- * 대기 화면이면 줄을 선다 (대기 화면이 아니면 곧장 null). 감시가 상태 줄을 쓰고 있으니
- * 줄 서기는 로그에 10초마다 한 줄씩만 남긴다.
+ * "late" 에서 감시를 켤 때. 상품 페이지를 받기 전에 쿠키 없이 대기열을 본다 — 서 있으면 **받지 않는다.**
+ * 받는 순간 그 창이 줄에 서고, 지금 서면 열리기 훨씬 전에 통과해 30초 뒤 자리를 잃는다. 창은 planner 가
+ * 줄 설 때에 띄운다. 대기열이 없으면 예전처럼 바로 띄워 둔다 (대기열 없이 받은 페이지에는 줄 선 자리가 없다).
  */
-function stand(key: string, box: Chrome, budget: number, opensAt: number | null): Promise<string | null> {
-  let lineAt = 0;
-  const say = (line: string) => {
-    if (Date.now() - lineAt < 10_000) return;
-    lineAt = Date.now();
-    log.info(`[${key}] ${line}` + (opensAt ? ` · 열리기까지 ${secs(opensAt - Date.now())}초` : ""));
+function launchUnlessQueued(cfg: Config, target: Target, why: string): Warm {
+  const w: Warm = { box: null, ready: Promise.resolve(null), planned: null };
+  w.ready = (async () => {
+    let gate = NO_GATE;
+    try {
+      gate = gateOf(await getPage(newSession(""), productUrl(target.key, target.sitmNo)));
+    } catch (e) {
+      log.debug(`[${target.key}] 켤 때 대기열을 못 봤습니다 (그냥 띄웁니다): ${(e as Error).message}`);
+    }
+    if (gate.waiting) {
+      w.deferred = true;
+      log.info(`[${target.key}] 벌써 대기열 ${gate.count.toLocaleString()}명이 서 있습니다 — 지금 서면 너무 일찍 통과하므로 ` +
+        "상품 페이지를 미리 받지 않습니다. 줄 설 때에 크롬을 띄웁니다");
+      return null;
+    }
+    const inner = launch(cfg, target, why);
+    const got = await inner.ready;
+    w.box = inner.box;
+    return got;
+  })();
+  return w;
+}
+
+/**
+ * 대기 화면이면 줄을 선다 (대기 화면이 아니면 곧장 null). 감시가 상태 줄을 쓰고 있으니
+ * 줄 서기는 로그에만 남긴다 — **5초마다 내 순번 한 줄.** 그날 줄이 실제로 얼마나 빨리 빠졌는지
+ * (queue_drain_per_second 를 고칠 재료) 가 여기서 나온다.
+ */
+function stand(
+  key: string, box: Chrome, budget: number, opensAt: number | null, passSeconds = PASS_SECONDS,
+): Promise<string | null> {
+  let first: { at: number; ahead: number } | null = null;
+  let loggedAt = 0;
+  const watch = (s: TracerState) => {
+    const now = Date.now();
+    if (!first) first = { at: now, ahead: s.ahead };
+    if (now - loggedAt < 5_000) return;
+    loggedAt = now;
+    log.info(`[${key}] 줄 기록 ${clock(now)} · 내 앞 ${s.ahead.toLocaleString()}명` +
+      (s.total ? ` · 줄 ${s.total.toLocaleString()}명` : "") +
+      (opensAt ? ` · 열리기까지 ${secs(opensAt - now)}초` : ""));
   };
-  return waitTracer(box.driver, budget, say).then((why) => {
+  return waitTracer(box.driver, budget, () => undefined, watch).then((why) => {
     if (why) {
       log.warn(`[${key}] ${why}`);
-    } else if (opensAt) {
-      const gap = secs(opensAt - Date.now());
-      log.info(gap > 0
-        ? `[${key}] 열리기 ${gap}초 전에 상품 페이지에 섰습니다 — 열리면 이 창에서 새로 고쳐 삽니다`
-        : `[${key}] 열린 뒤 ${-gap}초에 상품 페이지에 섰습니다`);
+      return why;
     }
-    return why;
+    const now = Date.now();
+    const waited = first ? (now - first.at) / 1000 : 0;
+    const rate = first && waited > 0 ? first.ahead / waited : 0;
+    if (first) {
+      log.info(`[${key}] 줄에서 ${Math.round(waited)}초 · 앞 ${first.ahead.toLocaleString()}명에서 ${clock(now)} 통과 · ` +
+        `평균 ${rate.toFixed(2)}명/초`);
+    }
+    if (opensAt) {
+      const gap = secs(opensAt - now);
+      if (first && gap > passSeconds) {
+        log.warn(`[${key}] 너무 일찍 통과했습니다 — 열리기 ${gap}초 전 (통과한 자리는 ~${passSeconds}초). ` +
+          "열린 뒤 새로 고치면 다시 줄에 설 수 있습니다. " +
+          `다음에는 queue_drain_per_second 를 올립니다 (이번 평균 ${rate.toFixed(2)}명/초)`);
+      } else {
+        log.info(gap > 0
+          ? `[${key}] 열리기 ${gap}초 전에 상품 페이지에 섰습니다 — 열리면 이 창에서 새로 고쳐 삽니다`
+          : `[${key}] 열린 뒤 ${-gap}초에 상품 페이지에 섰습니다`);
+      }
+    }
+    return null;
   });
 }
 
 /** 열리기 전에 대기열에 서도록 때를 잡는다. */
 async function planner(cfg: Config, target: Target, w: Warm, opensAt: number): Promise<void> {
   const key = target.key;
-  const lead = Math.max(0, cfg.warm_lead_seconds ?? 60) * 1000;
+  const late = lateTiming(cfg);
+  const lead = Math.max(0, late ? cfg.queue_pass_lead_seconds ?? 10 : cfg.warm_lead_seconds ?? 60) * 1000;
+  const rate = Math.max(0.05, cfg.queue_drain_per_second ?? 1);
+  // "late" 는 화면 스크립트의 셈(limitCnt ÷ session_time_out — 10-10 에는 6.7명/초)을 버리고 실측 속도로 센다.
+  // 줄 설 때 창을 새로 받거나 띄우는 몇 초도 뺀다.
+  const waitOf = (g: Gate): number => (late ? (g.waiting ? Math.round(g.count / rate) : 0) : g.eta);
+  const settle = late ? 3_000 : 0;
   // 쿠키 없이 본다. 대기 화면은 상품 페이지 주소에 그대로 온다.
   const s = newSession("");
   const peekUrl = productUrl(key, target.sitmNo);
   const mine = () => WARM.get(key) === w;
 
   sayStep(`[${key}] ${clock(opensAt)} 에 열립니다 — 대기열을 살피다가 ` +
-    `열리기 ${secs(lead)}초 전에 통과하도록 줄을 섭니다`);
+    `열리기 ${secs(lead)}초 전에 통과하도록 줄을 섭니다` +
+    (late ? ` (늦게 통과 노리기 · 줄 ${rate}명/초로 셈)` : ""));
 
   let gate = NO_GATE;
   let saidAt = 0;
@@ -166,12 +239,13 @@ async function planner(cfg: Config, target: Target, w: Warm, opensAt: number): P
     }
 
     const now = Date.now();
-    launchAt = opensAt - gate.eta * 1000 - lead;
+    const wait = waitOf(gate);
+    launchAt = opensAt - wait * 1000 - lead - settle;
     // 대기열이 서거나 풀릴 때, 그리고 30초마다 한 줄. 다음 드랍에서 줄이 언제부터 얼마나 길었는지 볼 재료다.
     if (gate.waiting !== saidWaiting || now - saidAt >= 30_000) {
       log.info(`[${key}] 열리기 ${secs(opensAt - now)}초 전 · ` +
         (gate.waiting
-          ? `대기열 ${gate.count.toLocaleString()}명 (자리 ${gate.limit} · ${gate.session}초) · 어림 ${gate.eta}초`
+          ? `대기열 ${gate.count.toLocaleString()}명 (자리 ${gate.limit} · ${gate.session}초) · 어림 ${wait}초`
           : "대기열 없음") +
         ` · 줄 설 때 ${clock(launchAt)}`);
       saidAt = now;
@@ -179,6 +253,16 @@ async function planner(cfg: Config, target: Target, w: Warm, opensAt: number): P
     }
     if (now >= opensAt) {
       log.info(`[${key}] 열릴 때까지 대기열이 안 섰습니다 — 띄워 둔 창에서 새로 고쳐 삽니다`);
+      return;
+    }
+    // 켤 때 대기열이 서 있어 창을 안 띄웠는데 그 줄이 풀렸다. 열리기 전에 창은 세워 둔다 — 열리는 순간
+    // 크롬 뜨는 3~4초를 쓰지 않으려고. 대기열이 없을 때 받은 페이지라 줄 선 자리도 없다.
+    if (w.deferred && !gate.waiting && opensAt - now <= 30_000) {
+      await w.ready;
+      if (!mine()) return;
+      const fresh = launch(cfg, target, `열리기 ${secs(opensAt - now)}초 전 · 대기열이 풀렸습니다 — 크롬을 띄워 둡니다`);
+      fresh.planned = opensAt;
+      WARM.set(key, fresh);
       return;
     }
     // 줄 설 때가 됐고 대기열이 서 있으면 선다. 대기열이 없으면 열릴 때까지 계속 본다 — 열리기
@@ -198,10 +282,11 @@ async function planner(cfg: Config, target: Target, w: Warm, opensAt: number): P
   if (!mine()) return;
   const box = w.box && !(await windowGone(w.box)) ? w.box : null;
 
+  const pass = gate.session || PASS_SECONDS;
   if (!box) {
     const fresh = launch(cfg, target, `열리기 ${before}초 전 — ` +
-      (gate.waiting ? `대기열 ${gate.count.toLocaleString()}명 · 어림 ${gate.eta}초. ` : "") +
-      "크롬을 띄워 줄을 섭니다", budget, opensAt);
+      (gate.waiting ? `대기열 ${gate.count.toLocaleString()}명 · 어림 ${waitOf(gate)}초. ` : "") +
+      "크롬을 띄워 줄을 섭니다", budget, opensAt, pass);
     fresh.planned = opensAt;
     WARM.set(key, fresh);
     return;
@@ -215,14 +300,14 @@ async function planner(cfg: Config, target: Target, w: Warm, opensAt: number): P
     log.info(`[${key}] 열리기 ${before}초 전 · 띄워 둔 창이 이미 줄에 섰습니다 — 그대로 둡니다`);
     return;
   }
-  sayStep(`[${key}] 열리기 ${before}초 전 — 대기열 ${gate.count.toLocaleString()}명 · 어림 ${gate.eta}초. ` +
+  sayStep(`[${key}] 열리기 ${before}초 전 — 대기열 ${gate.count.toLocaleString()}명 · 어림 ${waitOf(gate)}초. ` +
     "띄워 둔 창에서 상품 페이지를 새로 받아 줄을 섭니다");
   w.ready = reopen(box, target.url, cfg.browser_timeout_seconds ?? 20).then((reason) => {
     if (reason) {
       log.warn(`[${key}] 상품 페이지를 새로 받지 못했습니다 — ${reason}`);
       return reason;
     }
-    return stand(key, box, budget, opensAt);
+    return stand(key, box, budget, opensAt, pass);
   });
 }
 
