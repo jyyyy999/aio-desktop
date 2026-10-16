@@ -10,7 +10,7 @@
  * 페이지에서 10시에 새로 고쳤다 (사용자가 들은 말) — 통과한 자리가 새로 고침에도 남는다.
  *
  * **고침 (2026-10-17):** 남기는 남되 ~30초뿐이다 (10-10 실측). 그래서 기본은 queue_timing "late" — 열리기
- * 30초 안쪽 통과를 노리고(queue_pass_lead_seconds), 기다릴 어림은 실측 속도(queue_drain_per_second)로 센다.
+ * 30초 안쪽 통과를 노리고(queue_pass_lead_seconds), 기다릴 어림은 시간대별 실측 속도표(queue_drain_profile)로 센다.
  * 켤 때 이미 대기열이 서 있으면 상품 페이지를 미리 받지 않는다 (launchUnlessQueued). 아래 3 의 셈은 "early" 것이다.
  *
  *   1. 감시가 API 에서 열리는 시각을 읽는다 (product.ts 의 opens_at — 예약주문기간·판매 시작).
@@ -59,6 +59,54 @@ const lateTiming = (cfg: Config): boolean => (cfg.queue_timing ?? "late") !== "e
 
 /** 통과한 자리의 수명(초) — 대기 화면의 session_time_out. 못 읽으면 10-10 에 본 값. */
 const PASS_SECONDS = 30;
+
+/** 줄 속도표가 비었거나 틀렸을 때 쓰는 것 — config.ts 의 기본값과 같다 (10-10 실측). */
+const DRAIN_FALLBACK: [number, number][] = [[300, 3.5], [180, 1.4], [0, 0.7]];
+
+/** 속도표를 고른다: [열리기 N초 전보다 이르면, 명/초] 를 N 큰 것부터. 맨 위 속도는 0 보다 커야 한다. */
+function drainProfile(raw: unknown): [number, number][] {
+  const rows = (Array.isArray(raw) ? raw : [])
+    .filter((r): r is [number, number] =>
+      Array.isArray(r) && Number.isFinite(Number(r[0])) && Number.isFinite(Number(r[1])) && Number(r[1]) >= 0)
+    .map(([s, r]) => [Math.max(0, Number(s)), Number(r)] as [number, number])
+    .sort((a, b) => b[0] - a[0]);
+  return rows.length && rows[0]![1] > 0 ? rows : DRAIN_FALLBACK;
+}
+
+/**
+ * 열리기 lo 초 전 ~ hi 초 전 사이에 줄에서 빠지는 인원 (lo < hi). 칸 i 는 (Nᵢ, Nᵢ₋₁] 초 전, 맨 위 칸은 끝이 없다.
+ */
+export function drainedBetween(raw: unknown, lo: number, hi: number): number {
+  const rows = drainProfile(raw);
+  let sum = 0;
+  let upper = Infinity;
+  for (const [from, rate] of rows) {
+    sum += Math.max(0, Math.min(hi, upper) - Math.max(lo, from)) * rate;
+    upper = from;
+  }
+  return sum;
+}
+
+/**
+ * 앞에 count 명을 두고 줄에 서서 열리기 lead 초 전에 통과하려면 **열리기 몇 초 전에 서야 하나.**
+ * lead 에서 거슬러 올라가며 칸마다 빠질 인원을 쌓는다 — 오픈 직전의 느린 칸부터 채운다.
+ */
+export function joinSecondsBefore(raw: unknown, count: number, lead: number): number {
+  const rows = drainProfile(raw);
+  let left = Math.max(0, count);
+  let cursor = Math.max(0, lead);
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const [from, rate] = rows[i]!;
+    const upper = i === 0 ? Infinity : rows[i - 1]![0];
+    if (cursor >= upper) continue;
+    const start = Math.max(cursor, from);
+    const room = (upper - start) * rate;
+    if (room >= left) return start + (rate > 0 ? left / rate : 0);
+    left -= room;
+    cursor = upper;
+  }
+  return cursor; // 맨 위 칸은 끝이 없어 여기 오지 않는다
+}
 
 const WARM = new Map<string, Warm>();
 /** 상품마다 열리는 시각. 넘겨받은 뒤에도 남겨 둔다 — 열리는 순간 둘레에서 조회를 빠르게 한다. */
@@ -162,7 +210,7 @@ function launchUnlessQueued(cfg: Config, target: Target, why: string): Warm {
 /**
  * 대기 화면이면 줄을 선다 (대기 화면이 아니면 곧장 null). 감시가 상태 줄을 쓰고 있으니
  * 줄 서기는 로그에만 남긴다 — **5초마다 내 순번 한 줄.** 그날 줄이 실제로 얼마나 빨리 빠졌는지
- * (queue_drain_per_second 를 고칠 재료) 가 여기서 나온다.
+ * (queue_drain_profile 을 고칠 재료) 가 여기서 나온다.
  */
 function stand(
   key: string, box: Chrome, budget: number, opensAt: number | null, passSeconds = PASS_SECONDS,
@@ -195,7 +243,7 @@ function stand(
       if (first && gap > passSeconds) {
         log.warn(`[${key}] 너무 일찍 통과했습니다 — 열리기 ${gap}초 전 (통과한 자리는 ~${passSeconds}초). ` +
           "열린 뒤 새로 고치면 다시 줄에 설 수 있습니다. " +
-          `다음에는 queue_drain_per_second 를 올립니다 (이번 평균 ${rate.toFixed(2)}명/초)`);
+          `다음에는 queue_drain_profile 의 속도를 올립니다 (이번 평균 ${rate.toFixed(2)}명/초)`);
       } else {
         log.info(gap > 0
           ? `[${key}] 열리기 ${gap}초 전에 상품 페이지에 섰습니다 — 열리면 이 창에서 새로 고쳐 삽니다`
@@ -211,10 +259,12 @@ async function planner(cfg: Config, target: Target, w: Warm, opensAt: number): P
   const key = target.key;
   const late = lateTiming(cfg);
   const lead = Math.max(0, late ? cfg.queue_pass_lead_seconds ?? 10 : cfg.warm_lead_seconds ?? 60) * 1000;
-  const rate = Math.max(0.05, cfg.queue_drain_per_second ?? 1);
-  // "late" 는 화면 스크립트의 셈(limitCnt ÷ session_time_out — 10-10 에는 6.7명/초)을 버리고 실측 속도로 센다.
+  const profile = cfg.queue_drain_profile;
+  // "late" 는 화면 스크립트의 셈(limitCnt ÷ session_time_out — 10-10 에는 6.7명/초)을 버리고 시간대별 실측 속도로
+  // 센다: 지금 서면 앞에 count 명 → 열리기 몇 초 전에 서야 lead 초 전에 통과하나. 기다릴 어림은 그 차이다.
   // 줄 설 때 창을 새로 받거나 띄우는 몇 초도 뺀다.
-  const waitOf = (g: Gate): number => (late ? (g.waiting ? Math.round(g.count / rate) : 0) : g.eta);
+  const joinOf = (g: Gate): number => joinSecondsBefore(profile, g.waiting ? g.count : 0, lead / 1000);
+  const waitOf = (g: Gate): number => (late ? Math.round(joinOf(g) - lead / 1000) : g.eta);
   const settle = late ? 3_000 : 0;
   // 쿠키 없이 본다. 대기 화면은 상품 페이지 주소에 그대로 온다.
   const s = newSession("");
@@ -223,7 +273,7 @@ async function planner(cfg: Config, target: Target, w: Warm, opensAt: number): P
 
   sayStep(`[${key}] ${clock(opensAt)} 에 열립니다 — 대기열을 살피다가 ` +
     `열리기 ${secs(lead)}초 전에 통과하도록 줄을 섭니다` +
-    (late ? ` (늦게 통과 노리기 · 줄 ${rate}명/초로 셈)` : ""));
+    (late ? ` (늦게 통과 노리기 · 줄 속도는 시간대별 표로 셈)` : ""));
 
   let gate = NO_GATE;
   let saidAt = 0;

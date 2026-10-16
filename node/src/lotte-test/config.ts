@@ -121,8 +121,11 @@ export interface Config {
   queue_timing: "late" | "early";
   /** "late" 에서 통과를 노리는 시각 — 열리기 이만큼(초) 전. 통과한 자리는 ~30초뿐이라 그보다 작게 둔다. */
   queue_pass_lead_seconds: number;
-  /** "late" 에서 줄이 빠지는 속도 어림(명/초). 화면 스크립트의 셈(limitCnt ÷ session_time_out)은 쓰지 않는다. */
-  queue_drain_per_second: number;
+  /**
+   * "late" 에서 줄이 빠지는 속도(명/초) — **열리기까지 남은 시간대별.** [열리기 N초 전보다 이르면, 속도] 를 N 이
+   * 큰 것부터. 화면 스크립트의 셈(limitCnt ÷ session_time_out)은 쓰지 않는다.
+   */
+  queue_drain_profile: [number, number][];
   order_action: OrderAction;
   pay_method: string[];
   pay_method_mark: string;
@@ -210,16 +213,20 @@ export const DEFAULT_CONFIG: Config = {
    * 로드할 때 한 번만 보고 시계를 돌리지 않아서(main.js) 열린 뒤 한 번은 새로 고쳐야 버튼이 바뀐다. 그래서 통과는
    * **열리기 30초 안쪽**이어야 하고, 일찍 통과하면 끝이지만 늦으면 그만큼만 손해다 (열린 뒤 줄은 3~5명/초로 빠진다).
    *
-   *   - 줄 설 때 = 열리는 시각 − 대기 인원 ÷ queue_drain_per_second − queue_pass_lead_seconds
+   *   - 줄 설 때 = "지금 서면 내 앞 인원" 이 "지금부터 통과 목표(열리기 queue_pass_lead_seconds 초 전)까지 빠질
+   *     인원" 과 같아지는 때. 빠질 인원은 queue_drain_profile 의 시간대별 속도를 이어 붙여 센다.
+   *   - **속도는 한 값이 아니다.** 10-10 실측: 09:31~34 4.2 · 09:54~55 3.5 · 09:56 1.4 · 09:57~58 0.7명/초 — 열리기
+   *     4~5분 전부터 뚝 떨어진다. 한 값(예: 1명/초)으로 세면 초반의 빠른 몇 분을 못 보고 너무 일찍 서서 일찍 통과한다.
+   *     거꾸로 아래 표는 그날보다 조금 느리게 잡혔다 (09:54:26 앞 1,505명 → 09:58 표로는 1,176명 남음 · 실제 1,070명).
+   *     느리게 잡으면 늦게 서고, 늦는 쪽이 덜 위험하다.
    *   - 감시를 켤 때 이미 대기열이 서 있으면 상품 페이지를 미리 받지 않는다 (받는 순간 줄에 서서 일찍 통과한다).
-   *   - 줄 빠지는 속도 1명/초는 10-10 오픈 직전 실측(09:56 1.4 · 09:57~58 0.7명/초)에서 잡았다. 줄에 서 있는 동안
-   *     내 순번을 5초마다 로그에 남기니, 드랍이 끝나면 그날 속도로 고친다.
+   *   - 줄에 서 있는 동안 내 순번을 5초마다 로그에 남기니, 드랍이 끝나면 그날 속도로 표를 고친다.
    *
    * 예전 방식으로 돌리려면 queue_timing: "early".
    */
   queue_timing: "late",
   queue_pass_lead_seconds: 10,
-  queue_drain_per_second: 1,
+  queue_drain_profile: [[300, 3.5], [180, 1.4], [0, 0.7]],
   // 결제창을 띄우는 데까지가 이 프로그램의 끝이다.
   order_action: "submit",
 
