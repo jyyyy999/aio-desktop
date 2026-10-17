@@ -204,7 +204,8 @@ const SIZE_ALIASES: Record<string, string> = {
 };
 
 export function normalizeSize(value: string): string {
-  const raw = lower(value).replace(/\s+/g, "");
+  // 신발은 사이트가 "US 6" 라고 쓴다 — 사람이 "6" 이라고 적어도 맞게 "US" 를 뗀다 (2026-10-17 에 "6"·"7" 을 적고 못 샀다).
+  const raw = lower(value).replace(/\s+/g, "").replace(/^us(?=\d)/, "");
   if (!raw) return "";
   if (SIZE_ALIASES[raw]) return SIZE_ALIASES[raw]!;
   return raw
