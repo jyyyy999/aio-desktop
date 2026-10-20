@@ -112,12 +112,9 @@ const REFUSED = `${QUEUE_PREFIX}(TRACER)가 입장을 받지 않습니다 — �
  */
 export async function waitTracer(
   driver: WebDriver, maxSeconds: number, say: (line: string) => void = tick,
-  /** 읽을 때마다 상태를 넘긴다 (warm.ts 가 순번 기록에 쓴다) */
-  watch?: (s: TracerState) => void,
 ): Promise<string | null> {
-  const s = await readTracer(driver);
+  let s = await readTracer(driver);
   if (!s) return null;
-  watch?.(s);
 
   const started = Date.now();
   const deadline = started + Math.max(1, maxSeconds) * 1000;
@@ -134,7 +131,6 @@ export async function waitTracer(
     }
     if (now !== "unknown") {
       last = now;
-      watch?.(now);
       if (now.result === "R") return BLOCKED;
       if (now.result === "NE") return REFUSED;
       const line = `${QUEUE_PREFIX} ${lineOf(now)} · ${Math.round((Date.now() - started) / 1000)}초째`;
