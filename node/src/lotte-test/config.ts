@@ -111,12 +111,8 @@ export interface Config {
   browser_timeout_seconds: number;
   /** 대기열(TRACER)에서 차례를 기다릴 최대 시간(초). 이 시간은 browser_timeout_seconds 에 안 든다. */
   queue_wait_seconds: number;
-  /** 열리는 시각을 아는 상품이면 크롬을 미리 띄워 대기열에 세워 둔다 (warm.ts). */
+  /** 감시를 켜면 크롬을 미리 띄워 상품 페이지에 세워 둔다. 대기열이 있으면 그때 한 번 선다 (warm.ts). */
   warm_browser: boolean;
-  /** 열리기 이만큼(분) 전부터 대기열을 살피기 시작한다. */
-  warm_window_minutes: number;
-  /** 대기열을 열리기 이만큼(초) 전에 통과하도록 크롬 띄울 때를 잡는다. 크롬 뜨는 시간 포함. */
-  warm_lead_seconds: number;
   order_action: OrderAction;
   pay_method: string[];
   pay_method_mark: string;
@@ -183,20 +179,15 @@ export const DEFAULT_CONFIG: Config = {
   queue_wait_seconds: 300,
 
   /**
-   * **크롬 미리 띄우기 (warm.ts).** 열리는 시각을 API 가 알려 주는 상품(예약판매·판매 시작 전)은
-   * 열리기 warm_window_minutes 분 전부터 대기열 길이를 살핀다. 화면 스크립트와 같은 셈
-   * (session_time_out ÷ limitCnt × 대기 인원)으로 기다릴 시간을 어림해, **열리기
-   * warm_lead_seconds 초 전에 통과하도록** 크롬을 띄워 줄을 세운다. 대기열이 없어도 그만큼
-   * 전에는 띄워 둔다 — 크롬 뜨는 3~4초를 열리는 순간에 쓰지 않으려고.
+   * **크롬 미리 띄우기 (warm.ts).** 감시를 켜면 상품마다 크롬 창을 띄워 상품 페이지에 세워 둔다 —
+   * 크롬 뜨는 3~4초를 열리는 순간에 쓰지 않으려고. 그때 대기열이 서 있으면 **그 자리에서 한 번** 줄을
+   * 선다. 열리는 시각을 알면 열린 뒤 queue_wait_seconds 까지 줄에서 기다린다.
    *
-   * 일찍 통과해도 된다. 그날 산 사람들이 그렇게 했다 — 10시 전에 줄을 뚫어 놓고 상품 페이지에서
-   * 10시에 새로 고쳤다 (사용자가 들은 말, 2026-10-03). 통과한 자리가 새로 고침에도 남는다는
-   * 뜻이다. 그래서 어림이 틀려도 넉넉하게 60초 전을 노린다. 다음 드랍 로그(통과 시각·열린 뒤
-   * 새로 받을 때 다시 대기열이 떴는지)로 확인한다.
+   * 예전에는 열리기 warm_window_minutes(30분) 전부터 대기열을 살피다가 열리기 warm_lead_seconds 초 전에
+   * 통과하도록 줄 설 때를 맞췄다. 2026-10-17 MEGA 30th 에서 그 셈이 빗나가(줄 속도가 날마다 다르다)
+   * 2026-10-21 에 사용자가 없앴다. 두 칸은 이제 읽지 않는다 — 설정 파일에 남아 있어도 상관없다.
    */
   warm_browser: true,
-  warm_window_minutes: 30,
-  warm_lead_seconds: 60,
   // 결제창을 띄우는 데까지가 이 프로그램의 끝이다.
   order_action: "submit",
 
