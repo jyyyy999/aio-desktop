@@ -11,7 +11,8 @@ import { FoundAlerts, MONITOR_LOG, MonitorsPage } from "./Monitors";
 import { SupremeOrderPage } from "./SupremeOrder";
 import {
   SUPREME_CATEGORIES, describeSupremeCategories, describeSupremeOption, hasSupremeKeyword, isSupremeProductUrl,
-  joinSupremeOption, splitSupremeOption, supremeCategories, supremeKeywords, withSupremeCategory,
+  joinSupremeOption, shortSupremeSize, splitSupremeOption, SUPREME_SIZE_GROUPS, supremeCategories, supremeKeywords,
+  supremeSizeGroupOf, withSupremeCategory,
 } from "../shared/supremeSpec";
 
 const aio = window.aio;
@@ -812,6 +813,51 @@ export function LogView({ lines }: { lines: LogLine[] }) {
   );
 }
 
+/**
+ * 슈프림 사이즈 — 손으로 적지 않고 버튼으로 고른다. 저장은 사이트가 쓰는 글자 그대로("XLarge", "US 6.5")라
+ * 신발에 "6" 이라고 적어 "US 6" 을 놓치는 일이 없다. 고른 것을 다시 누르면 지운다(설정의 우선순위를 따른다).
+ * 버튼에 없는 사이즈(모자 7 1/4 같은 것)는 "직접" 에서 적는다.
+ */
+function SupremeSizePicker({ size, category, onPick }: { size: string; category: string; onPick: (size: string) => void }) {
+  const known = !size || SUPREME_SIZE_GROUPS.some((g) => g.sizes.includes(size));
+  const [picked, setPicked] = useState<string | null>(known ? null : "custom");
+  // 묶음을 직접 고르기 전에는 사이즈·카테고리를 따라간다 (#shoes 로 바꾸면 신발 버튼이 뜬다).
+  const group = picked ?? supremeSizeGroupOf(size, category);
+  const sizes = SUPREME_SIZE_GROUPS.find((g) => g.id === group)?.sizes ?? [];
+  return (
+    <div className="modal-field">
+      <span>
+        사이즈{" "}
+        {size
+          ? <span className="muted">— <b className="size-picked">{size}</b></span>
+          : <span className="muted">(안 고르면 설정의 사이즈 우선순위)</span>}
+      </span>
+      <div className="size-tabs">
+        {SUPREME_SIZE_GROUPS.map((g) => (
+          <button key={g.id} type="button" className={`chip ${group === g.id ? "on" : ""}`} onClick={() => setPicked(g.id)}>
+            {g.label}
+          </button>
+        ))}
+        <button type="button" className={`chip ${group === "custom" ? "on" : ""}`} onClick={() => setPicked("custom")}>직접</button>
+      </div>
+      {group === "custom" ? (
+        <input value={size} placeholder="7 1/4" onChange={(e) => onPick(e.target.value)} />
+      ) : (
+        <div className="size-grid">
+          {sizes.map((s) => (
+            <button
+              key={s} type="button" className={`size-btn ${size === s ? "on" : ""}`} title={s}
+              onClick={() => onPick(size === s ? "" : s)}
+            >
+              {shortSupremeSize(s)}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TaskForm({ task, infos, live, profiles, usersOf, onLogin, onUpsertProfile, onSave, onCancel }: {
   task: TaskDef; infos: SiteInfo[]; live: boolean; profiles: Profile[];
   /** 이 프로필로 지금 도는 (이 태스크 말고) 태스크·모니터. */
@@ -939,14 +985,11 @@ function TaskForm({ task, infos, live, profiles, usersOf, onLogin, onUpsertProfi
                   onChange={(e) => set("option", joinSupremeOption(e.target.value, option.size))}
                 />
               </label>
-              <label>
-                사이즈
-                <input
-                  value={option.size} placeholder="Large"
-                  onChange={(e) => set("option", joinSupremeOption(option.color, e.target.value))}
-                />
-              </label>
             </div>
+            <SupremeSizePicker
+              size={option.size} category={supremeCategories(t.url)[0] ?? ""}
+              onPick={(size) => set("option", joinSupremeOption(option.color, size))}
+            />
             <div className="row">
               <label className="narrow">
                 수량

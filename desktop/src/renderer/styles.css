@@ -187,6 +187,17 @@ td.last { overflow: hidden; text-overflow: ellipsis; color: #c3c9d6; font-family
 .modal fieldset.timing p { margin: 0; }
 .modal input:disabled { opacity: .45; }
 
+/* 슈프림 사이즈 버튼 */
+.size-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.size-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.size-btn {
+  min-width: 46px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--bg); color: var(--text); font: inherit; font-size: 12px; cursor: pointer;
+}
+.size-btn:hover { border-color: var(--muted); }
+.size-btn.on { border-color: var(--supreme); background: #2a0d12; color: #fff; font-weight: 600; }
+.size-picked { color: var(--text); }
+
 /* ── 계정 · 돌던 중에 고치기 ─────────────────────────────────────────── */
 .login-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: middle; background: var(--muted); }
 .login-dot.logged_in { background: var(--go); }

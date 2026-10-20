@@ -15,6 +15,11 @@ npm start          :: main·worker·렌더러를 굽고 창을 띄운다
 npm run typecheck  :: 세 설정 + 원본과 맞대 보기 (아래 '경로 별칭')
 ```
 
+**윈도우에서 사용자 폴더가 한글이면** (`C:\Users\제영`) `electron.exe` 가 그 아래에서는 시작하자마자 아무 말 없이 죽는다
+(2026-10-17). 그래서 `npm start` 는 `electron .` 대신 `scripts/start-electron.mjs` 를 부른다 — Electron 을 영문 경로
+(`C:\aio-electron\<버전>`, `AIO_ELECTRON_DIR` 로 바꿀 수 있다)에 처음 한 번 복사해 두고 거기서 띄운다. 버전을 올리면 새로
+복사한다. 맥·리눅스와 영문 경로에서는 아무것도 안 한다.
+
 준비가 덜 된 사이트는 상단 오른쪽 알림(🔔)에 뜬다 (태스크가 있는 사이트만 — 누르면 펼친다). 롯데는 **원본 빌드**
 (`node/` 에서 `npm run build`), 네이버는 tsx 가 없으면 **설치**(`naver/ts` 에서 `npm install`)
 버튼이 있다. 로그인은 왼쪽 **프로필**에서 한다 (아래 '프로필'). 사이트마다 계정을 여럿 두고 태스크마다 고른다.

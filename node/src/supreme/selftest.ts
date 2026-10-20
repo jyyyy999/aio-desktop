@@ -130,6 +130,10 @@ function pureTests(): void {
   ok("270 ≠ 280", sizeEquals("270", "280") === false);
   ok("2XL = XXL", sizeEquals("2XL", "XXL"));
   ok("2xl = xxlarge", sizeEquals("2xl", "xxlarge"));
+  ok("6 = US 6 (신발)", sizeEquals("6", "US 6"));
+  ok("US6 = US 6", sizeEquals("US6", "US 6"));
+  ok("5.5 = US 5.5", sizeEquals("5.5", "US 5.5"));
+  ok("US 6 ≠ US 6.5", sizeEquals("US 6", "US 6.5") === false);
   ok("3XL = XXXL", sizeEquals("3XL", "XXXL"));
   ok("2XS = XXS", sizeEquals("2XS", "XXS"));
   ok("L 로 Large 를 고른다", pickVariant(product, buyRule({ sizePriority: ["L"] }), rule()).variant?.size === "Large");

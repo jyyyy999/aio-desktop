@@ -15,8 +15,37 @@ export const SUPREME_CATEGORIES: { id: string; label: string }[] = [
   { id: "hats", label: "hats" },
   { id: "bags", label: "bags" },
   { id: "accessories", label: "accessories" },
+  { id: "shoes", label: "shoes (신발)" },
   { id: "skate", label: "skate" },
 ];
+
+/**
+ * 사이즈 버튼 — **사이트가 쓰는 글자 그대로** 저장한다 (2026-10-17 실제 상품 기준: 옷 "Small"·"XLarge", 신발 "US 6"·"US 6.5").
+ * 신발에 "6" 이라고 적어서 "US 6" 을 못 산 일이 있어 손으로 적지 않고 고르게 했다.
+ */
+export const SUPREME_SIZE_GROUPS: { id: "tops" | "pants" | "shoes" | "os"; label: string; sizes: string[] }[] = [
+  { id: "tops", label: "옷", sizes: ["Small", "Medium", "Large", "XLarge", "XXLarge"] },
+  { id: "pants", label: "바지 (허리)", sizes: ["28", "30", "32", "34", "36", "38"] },
+  {
+    id: "shoes", label: "신발 (US)",
+    sizes: ["4", "4.5", "5", "5.5", "6", "6.5", "7", "7.5", "8", "8.5", "9", "9.5", "10", "10.5", "11", "11.5", "12", "12.5", "13", "14"].map((n) => `US ${n}`),
+  },
+  { id: "os", label: "원사이즈", sizes: ["OS"] },
+];
+
+/** 버튼에 보일 짧은 이름 — "XLarge" → "XL", "US 6.5" → "6.5". */
+export const shortSupremeSize = (size: string): string =>
+  ({ Small: "S", Medium: "M", Large: "L", XLarge: "XL", XXLarge: "XXL" } as Record<string, string>)[size] ?? size.replace(/^US\s*/, "");
+
+/** 지금 사이즈·카테고리로 처음 펼칠 묶음 — 고른 사이즈가 든 묶음, 없으면 카테고리(#shoes → 신발). */
+export function supremeSizeGroupOf(size: string, category: string): (typeof SUPREME_SIZE_GROUPS)[number]["id"] {
+  const hit = SUPREME_SIZE_GROUPS.find((g) => g.sizes.includes(size));
+  if (hit) return hit.id;
+  if (/^us\s*\d/i.test(size) || category === "shoes") return "shoes";
+  if (category === "pants") return "pants";
+  if (category === "hats" || category === "bags" || category === "accessories" || category === "skate") return "os";
+  return "tops";
+}
 
 /** 상품 주소인가 (키워드 사양이 아니라). */
 export const isSupremeProductUrl = (spec: string): boolean => /\/products\/[A-Za-z0-9_-]+/.test(spec.trim());
