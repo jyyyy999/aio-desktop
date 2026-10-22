@@ -413,3 +413,56 @@ label.inline { display: flex; align-items: center; gap: 6px; font-size: 12px; co
 .order-actions { display: flex; align-items: center; gap: 8px; }
 .order-foot { line-height: 1.6; }
 @media (max-width: 900px) { .order-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* ── 발매정보 ─────────────────────────────────────────────────────────── */
+.today-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-left: 6px; vertical-align: middle; background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+.releases-page { overflow: auto; padding: 14px 18px 18px; display: flex; flex-direction: column; gap: 12px; }
+.release-search {
+  width: 220px; background: var(--bg); border: 1px solid var(--line); border-radius: 7px; color: var(--text); padding: 6px 9px; font: inherit;
+}
+.release-search:focus { outline: none; border-color: var(--accent); }
+.release-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.release-filters .hidden-auto { margin-left: auto; }
+.release-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 28px 18px; }
+.release-empty p { margin: 0; max-width: 560px; line-height: 1.5; }
+.pill.today { color: #c4b5fd; border-color: #4c3a8a; background: #1b1733; }
+.group-head.fold { width: 100%; background: transparent; border: 0; border-bottom: 1px solid var(--line); color: var(--text); font: inherit; cursor: pointer; text-align: left; }
+.group-head.fold:hover .fold-mark { color: var(--text); }
+.fold-mark { color: var(--muted); width: 10px; }
+.release-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 10px; }
+.release-card {
+  min-width: 0; display: flex; gap: 12px;
+  padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+}
+.release-card.today { border-color: var(--accent); background: #17142a; box-shadow: inset 3px 0 0 var(--accent); }
+.release-card.past { opacity: .5; }
+.release-card.past:hover { opacity: .85; }
+.release-thumb { flex: none; width: 72px; height: 72px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); }
+.release-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.release-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.release-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.store-tag { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 4px; border: 1px solid var(--line); color: #c3c9d6; background: var(--panel-2); }
+.pill.method.raffle, .pill.method.draw { color: #f5d08a; border-color: #5a3f0c; }
+.pill.method.fcfs { color: var(--info); border-color: #0f4a66; }
+.pill.src.auto { color: var(--go); border-color: #14532d; background: #0c2415; }
+.pill.src.manual { color: var(--muted); }
+.release-when { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.until { font-weight: 600; color: var(--info); }
+.until.today { color: #c4b5fd; }
+.release-card.past .until { color: var(--muted); }
+.release-memo { color: #c3c9d6; white-space: pre-wrap; word-break: break-word; }
+.release-links { display: flex; flex-wrap: wrap; gap: 6px; }
+.release-links .btn { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #9bb4e6; }
+.release-card .account-actions { margin-top: 2px; align-items: center; }
+.release-card .icon { width: 26px; height: 26px; }
+.modal textarea {
+  background: var(--bg); border: 1px solid var(--line); border-radius: 7px; color: var(--text);
+  padding: 8px 10px; font: inherit; resize: vertical;
+}
+.modal textarea:focus { outline: none; border-color: var(--accent); }
+.modal input[type="datetime-local"] { color-scheme: dark; }
+.segmented button.on.method { color: var(--text); background: #1b1733; font-weight: 600; }
+.link-row { display: flex; align-items: flex-start; gap: 8px; }
+.link-row .link-label { flex: 0 0 150px; min-width: 0; }
+.link-row .link-url { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.link-row .icon { flex: none; margin-top: 4px; }
