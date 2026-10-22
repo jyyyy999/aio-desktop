@@ -3,11 +3,13 @@
  * sandbox 에서 돌므로 electron 말고는 들이지 않는다 (types 는 컴파일 때 지워진다).
  */
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import type { AioApi, LogLine, MonitorEntry, MonitorFound, Profile, QueuePeek, TaskDef, TaskRuntime } from "../shared/types.js";
+import type { AioApi, LogLine, MonitorEntry, MonitorFound, Profile, QueuePeek, ReleaseList, TaskDef, TaskRuntime } from "../shared/types.js";
 
 const call = (channel: string, ...args: unknown[]) => ipcRenderer.invoke(`aio:${channel}`, ...args);
 /** 모니터는 채널을 monitor:* 로 가른다. */
 const callMonitor = (channel: string, ...args: unknown[]) => ipcRenderer.invoke(`monitor:${channel}`, ...args);
+/** 발매정보는 release:* */
+const callRelease = (channel: string, ...args: unknown[]) => ipcRenderer.invoke(`release:${channel}`, ...args);
 
 function listen<T>(channel: string, cb: (value: T) => void): () => void {
   const handler = (_e: IpcRendererEvent, value: T) => cb(value);
@@ -35,6 +37,16 @@ const api: AioApi = {
     onFound: (cb) => listen<MonitorFound>("monitor:found", cb),
     onRemoved: (cb) => listen<string>("monitor:removed", cb),
     onSwitched: (cb) => listen<{ monitorId: string; taskId: string }>("monitor:switched", cb),
+  },
+  release: {
+    list: () => callRelease("list"),
+    create: (input) => callRelease("create", input),
+    update: (id, input) => callRelease("update", id, input),
+    delete: (id) => callRelease("delete", id),
+    hideAuto: (id) => callRelease("hideAuto", id),
+    showHidden: () => callRelease("showHidden"),
+    openLink: (url) => callRelease("openLink", url),
+    onChanged: (cb) => listen<ReleaseList>("release:changed", cb),
   },
   supremeOrder: {
     get: () => call("supremeOrderGet"),

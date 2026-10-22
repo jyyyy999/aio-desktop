@@ -4,10 +4,11 @@ import {
   REPEATING_MODES, SITE_IDS, SITES, siteLog, siteOfUrl, TIMING_BLANK,
 } from "../shared/sites";
 import type {
-  DropSettings, LoginStatus, LogLine, MonitorEntry, MonitorFound, MonitorStatus, OrderAction, Profile, Settings, SiteId, SiteInfo,
+  DropSettings, LoginStatus, LogLine, MonitorEntry, MonitorFound, MonitorStatus, OrderAction, Profile, ReleaseList, Settings, SiteId, SiteInfo,
   TaskDef, TaskMode, TaskRuntime, TaskStatus, TimingDefaults,
 } from "../shared/types";
 import { FoundAlerts, MONITOR_LOG, MonitorsPage } from "./Monitors";
+import { isPast, isToday, ReleasesPage } from "./Releases";
 import { SupremeOrderPage } from "./SupremeOrder";
 import {
   SUPREME_CATEGORIES, describeSupremeCategories, describeSupremeOption, hasSupremeKeyword, isSupremeProductUrl,
@@ -44,7 +45,7 @@ export const LOGIN_LABEL: Record<LoginStatus, string> = {
   error: "확인 못 함",
 };
 
-type View = "tasks" | "monitors" | "profiles" | "supreme-order";
+type View = "tasks" | "monitors" | "releases" | "profiles" | "supreme-order";
 
 /** 새 태스크가 처음 고를 프로필 — 그 사이트에서 로그인된 것, 없으면 아무거나. */
 /**
@@ -232,6 +233,8 @@ export function App() {
   const [monitors, setMonitors] = useState<MonitorEntry[]>([]);
   /** 메인 창 위에 뜨는 재고 발견 알림 — 모니터마다 마지막 것 하나. 닫으면 알림만 치운다. */
   const [foundAlerts, setFoundAlerts] = useState<MonitorFound[]>([]);
+  /** 발매정보 — 수동 항목과 태스크에서 만든 자동 항목. main 이 바뀔 때마다 통째로 보낸다. */
+  const [releases, setReleases] = useState<ReleaseList | null>(null);
   const [now, setNow] = useState(Date.now());
   /** 결제 비밀번호 창을 연 프로필. */
   const [pinFor, setPinFor] = useState<string | null>(null);
@@ -263,6 +266,7 @@ export function App() {
     void aio.runtimes().then((list) => setRuntimes(Object.fromEntries(list.map((r) => [r.id, r]))));
     void aio.listProfiles().then(setProfiles);
     void aio.monitor.list().then(setMonitors);
+    void aio.release.list().then(setReleases);
     refreshInfo();
     const offRt = aio.onRuntime((rt) => setRuntimes((prev) => ({ ...prev, [rt.id]: rt })));
     const offProfile = aio.onProfile(upsertProfile);
@@ -291,8 +295,10 @@ export function App() {
       setView("tasks");
       setSelected(taskId);
     });
+    const offReleases = aio.release.onChanged(setReleases);
     const tick = setInterval(() => setNow(Date.now()), 1000);
     return () => {
+      offReleases();
       offRt();
       offProfile();
       offTasks();
@@ -391,6 +397,10 @@ export function App() {
     void aio.start(t.id);
   };
   const pinProfile = profileOf(pinFor ?? undefined);
+  const upcomingReleases = (releases?.items ?? []).filter((r) => !isPast(r.releaseAt, now));
+  const releasesToday = upcomingReleases.filter((r) => isToday(r.releaseAt, now)).length;
+  /** 로그 칸이 없는 화면 — 아래 칸을 비워 두지 않고 그 화면이 다 쓴다. */
+  const fullPage = view === "supreme-order" || view === "releases";
 
   return (
     <div className="app">
@@ -432,6 +442,10 @@ export function App() {
             <span>모니터{monitors.some((m) => m.state.status === "found") && <span className="found-dot" title="재고를 발견한 모니터가 있습니다" />}</span>
             <span className="count">{monitors.length}</span>
           </button>
+          <button type="button" className={`side-item ${view === "releases" ? "on" : ""}`} onClick={() => setView("releases")}>
+            <span>발매정보{releasesToday > 0 && <span className="today-dot" title={`오늘 발매 ${releasesToday}개`} />}</span>
+            <span className="count">{upcomingReleases.length}</span>
+          </button>
           <button type="button" className={`side-item ${view === "profiles" ? "on" : ""}`} onClick={() => setView("profiles")}>
             <span>프로필{issues.length > 0 && <span className="warn-dot" title="로그인이 필요한 태스크가 있습니다" />}</span>
             <span className="count">{profiles.length}</span>
@@ -452,9 +466,11 @@ export function App() {
             </nav>
           )}
 
-          <main className={view === "supreme-order" ? "grid single" : "grid"}>
+          <main className={fullPage ? "grid single" : "grid"}>
             {view === "supreme-order" ? (
               <SupremeOrderPage />
+            ) : view === "releases" ? (
+              <ReleasesPage list={releases} now={now} onList={setReleases} />
             ) : view === "monitors" ? (
               <MonitorsPage
                 monitors={monitors} profiles={profiles} infos={infos} selected={selected} now={now}
@@ -600,8 +616,8 @@ export function App() {
               </section>
             )}
 
-            {/* 주문서 화면에는 로그가 없다 — 아래 칸을 비워 두지 않고 주문서가 다 쓴다. */}
-            {view !== "supreme-order" && <section className="logs">
+            {/* 주문서·발매정보 화면에는 로그가 없다. */}
+            {!fullPage && <section className="logs">
               <div className="logs-head">
                 <span>
                   로그 · <b>{selected === PREPARE_LOG ? "준비 (빌드·설치)"

@@ -516,9 +516,76 @@ export interface SupremeDropState {
   seedExists: boolean;
 }
 
+// ── 발매정보 ──────────────────────────────────────────────────────────────
+//
+// 발매 예정·진행 중인 상품과 그 링크(공식 판매처·응모 페이지·참고 글)를 모아 보는 목록. 사람이 넣는 것(manual)은
+// releases.json 에 적고, 봇이 이미 아는 것(auto)은 태스크에서 그때그때 만든다 — 드랍 태스크의 드랍 시각, 롯데
+// 대기열 보기가 상품 API 에서 읽은 열리는 시각. 자동 항목은 고치지 않는다 (숨기거나 수동 항목으로 베낀다).
+
+/** 발매 방식. */
+export type ReleaseMethod = "fcfs" | "raffle" | "draw" | "reservation" | "other";
+
+export interface ReleaseLink {
+  label: string;
+  /** http · https 만. */
+  url: string;
+}
+
+export interface Release {
+  id: string;
+  name: string;
+  /** 브랜드 · 스토어 (필터가 이것으로 묶는다). */
+  store: string;
+  /** 발매 일시 (ISO). */
+  releaseAt: string;
+  method: ReleaseMethod;
+  /** 비었으면 "". 통화가 사이트마다 달라 글로 둔다 ("139,000원" · "HK$1,280"). */
+  price: string;
+  /** 썸네일 주소 (http · https). 비었으면 "". */
+  thumbnail: string;
+  links: ReleaseLink[];
+  memo: string;
+  source: "manual" | "auto";
+  /** 자동 항목 — 어느 태스크에서, 무엇으로 알았나. */
+  taskId?: string;
+  origin?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 폼에서 오는 것. */
+export type ReleaseInput = Pick<Release, "name" | "store" | "releaseAt" | "method" | "price" | "thumbnail" | "links" | "memo">;
+
+/** 화면이 받는 한 벌. */
+export interface ReleaseList {
+  /** 수동 + (숨기지 않은) 자동. 정렬은 화면이 한다. */
+  items: Release[];
+  /** 숨긴 자동 항목 수. */
+  hiddenAuto: number;
+  /** 저장 파일 (releases.json). */
+  path: string;
+}
+
+export interface ReleaseApi {
+  list(): Promise<ReleaseList>;
+  create(input: ReleaseInput): Promise<ReleaseList>;
+  update(id: string, input: ReleaseInput): Promise<ReleaseList>;
+  delete(id: string): Promise<ReleaseList>;
+  /** 자동 항목을 목록에서 뺀다 (태스크는 그대로). */
+  hideAuto(id: string): Promise<ReleaseList>;
+  /** 숨긴 자동 항목을 전부 다시 보인다. */
+  showHidden(): Promise<ReleaseList>;
+  /** 기본 브라우저로 연다 (http · https 만 — 아니면 거절). */
+  openLink(url: string): Promise<void>;
+  /** 목록이 바뀌었다 (태스크·드랍 예약·열리는 시각이 바뀌어 자동 항목이 달라진 것도). */
+  onChanged(cb: (list: ReleaseList) => void): () => void;
+}
+
 /** preload 가 window.aio 로 여는 것. */
 export interface AioApi {
   monitor: MonitorApi;
+  /** 발매정보 — 채널은 release:* */
+  release: ReleaseApi;
   /** 슈프림 주문서 프로필 (사이트당 한 벌 · 카드·생년월일·PIN 은 암호화). */
   supremeOrder: SupremeOrderApi;
   listTasks(): Promise<TaskDef[]>;

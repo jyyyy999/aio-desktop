@@ -8,7 +8,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { SITE_IDS, SITES, TIMING_BLANK } from "../shared/sites.js";
 import type {
-  LogLine, MonitorEntry, MonitorFound, MonitorInput, Profile, ProfilePatch, QueuePeek, Settings, SiteId, SiteSettings, TaskDef,
+  LogLine, MonitorEntry, MonitorFound, MonitorInput, Profile, ProfilePatch, QueuePeek, ReleaseInput, Settings, SiteId, SiteSettings, TaskDef,
   TaskRuntime,
 } from "../shared/types.js";
 import { MonitorManager } from "./monitorManager.js";
@@ -18,6 +18,8 @@ import { SessionManager, type LoginWindows, type PinVault } from "./sessions.js"
 import { isDiscordWebhook, sendFound, sendTest } from "./webhook.js";
 import { ADAPTERS } from "./sites/index.js";
 import { QueueWatch } from "./queueWatch.js";
+import { ReleaseStore } from "./releaseStore.js";
+import { isHttpUrl } from "../shared/releases.js";
 import { TaskManager } from "./taskManager.js";
 
 /** 앱이 aio/desktop 에 있으니 롯데 원본은 옆집 aio/node, 네이버 원본은 ../naver/ts 에 있다. */
@@ -60,6 +62,12 @@ let sessions: SessionManager;
 let monitors: MonitorManager;
 /** 열리기 전 대기열 보기 — 태스크 창이 켠 동안만 돈다. */
 let queueWatch: QueueWatch | undefined;
+/** 발매정보 — 수동 항목은 releases.json, 자동 항목은 태스크(드랍 시각·열리는 시각)에서 만든다. */
+let releases: ReleaseStore;
+
+const releaseList = () => releases.list(manager.list(), manager.runtimes());
+/** 자동 항목이 태스크를 따라 바뀌므로 태스크·예약·열리는 시각이 바뀌어도 보낸다. */
+const pushReleases = () => win?.webContents.send("release:changed", releaseList());
 
 const RENDERER = join(__dirname, "..", "renderer", "index.html");
 
@@ -567,6 +575,33 @@ function registerIpc(): void {
   ipcMain.handle("monitor:closePopup", (_e, id: string) => closeMonitorPopup(id));
   ipcMain.handle("monitor:getLogs", (_e, id: string) => monitors.logs(id));
   ipcMain.handle("monitor:saveLog", (_e, id: string) => saveMonitorLog(id));
+  // 발매정보 — 채널은 release:*. 바꾸는 것은 전부 새 목록을 돌려준다.
+  ipcMain.handle("release:list", () => releaseList());
+  ipcMain.handle("release:create", (_e, input: ReleaseInput) => {
+    releases.create(input);
+    return releaseList();
+  });
+  ipcMain.handle("release:update", (_e, id: string, input: ReleaseInput) => {
+    releases.update(id, input);
+    return releaseList();
+  });
+  ipcMain.handle("release:delete", (_e, id: string) => {
+    releases.remove(id);
+    return releaseList();
+  });
+  ipcMain.handle("release:hideAuto", (_e, id: string) => {
+    releases.hideAuto(id);
+    return releaseList();
+  });
+  ipcMain.handle("release:showHidden", () => {
+    releases.showHidden();
+    return releaseList();
+  });
+  // 앱 안에서 열지 않고 기본 브라우저로. 렌더러가 무엇을 넘기든 http · https 말고는 열지 않는다.
+  ipcMain.handle("release:openLink", async (_e, url: string) => {
+    if (!isHttpUrl(String(url ?? ""))) throw new Error("http · https 주소만 열 수 있습니다.");
+    await shell.openExternal(new URL(String(url).trim()).toString());
+  });
 }
 
 app.whenReady().then(() => {
@@ -579,16 +614,28 @@ app.whenReady().then(() => {
     // 네이버 요청률 합·한 프로필에 하나 — 도는 모니터도 같이 센다.
     () => monitors.liveUses(),
   );
+  releases = new ReleaseStore(app.getPath("userData"));
+  /** 태스크마다 마지막으로 본 드랍 예약 시각 — 바뀔 때만 발매정보를 다시 보낸다 (runtime 은 초에 몇 번씩 온다). */
+  const dropAts = new Map<string, number | null>();
   manager.on("runtime", (rt: TaskRuntime) => {
     win?.webContents.send("aio:runtime", rt);
     toTaskWatch(rt.id, "aio:runtime", rt);
+    if ((dropAts.get(rt.id) ?? null) !== rt.dropAt) {
+      dropAts.set(rt.id, rt.dropAt);
+      pushReleases();
+    }
   });
   manager.on("log", queueLog);
   // 열리기 전 대기열 보기 — 그 태스크의 태스크 창에만 보낸다 (켠 것도 그 창이다).
   queueWatch = new QueueWatch((id) => manager.list().find((t) => t.id === id));
-  queueWatch.on("peek", (p: QueuePeek) => toTaskWatch(p.taskId, "aio:queuePeek", p));
+  queueWatch.on("peek", (p: QueuePeek) => {
+    toTaskWatch(p.taskId, "aio:queuePeek", p);
+    // 대기열 보기가 읽은 열리는 시각을 발매정보의 자동 항목으로 남긴다.
+    if (releases.noteOpensAt(p.taskId, p.opensAt)) pushReleases();
+  });
   manager.on("tasks", (tasks: TaskDef[]) => {
     win?.webContents.send("aio:tasks", tasks);
+    pushReleases();
     for (const id of [...taskWatches.keys()]) {
       // 지운 태스크의 태스크 창은 닫는다. 남은 것에는 바뀐 설정을 보낸다.
       if (tasks.some((t) => t.id === id)) toTaskWatch(id, "aio:tasks", tasks);
