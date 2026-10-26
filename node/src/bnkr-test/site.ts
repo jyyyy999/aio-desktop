@@ -76,13 +76,16 @@ export function goodsUrl(gno: string): string {
   return `${DETAIL_URL}?gno=${gno}`;
 }
 
-/** get_text(" ", strip=True) 와 같은 것. 요소 사이를 한 칸 띄워 이어 붙인다. */
+/**
+ * get_text(" ", strip=True) 와 같은 것. 요소 사이를 한 칸 띄워 이어 붙인다. 엔티티는 푼다 (`&amp;` → `&`) — rawText 는
+ * HTML 그대로라 "글리터&amp;글래머러스" 처럼 로그·알림에 나갔다. text 가 푼 글자다.
+ */
 export function textOf(node: HTMLElement | null | undefined): string | null {
   if (!node) return null;
   const bits: string[] = [];
-  const walk = (n: { nodeType: number; rawText?: string; childNodes: unknown[] }) => {
+  const walk = (n: { nodeType: number; text?: string; rawText?: string; childNodes: unknown[] }) => {
     if (n.nodeType === 3) {
-      const t = (n.rawText ?? "").replace(/\s+/g, " ").trim();
+      const t = (n.text ?? n.rawText ?? "").replace(/\s+/g, " ").trim();
       if (t) bits.push(t);
       return;
     }

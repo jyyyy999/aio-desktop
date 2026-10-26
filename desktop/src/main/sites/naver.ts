@@ -14,7 +14,7 @@
  */
 import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { NAVER_ACTIONS } from "../../shared/sites.js";
+import { isNaverSearch, NAVER_ACTIONS } from "../../shared/sites.js";
 import type { CommonSettings, MonitorDef, OrderAction, SiteSettings, TaskDef, TimingDefaults, WebhookInfo } from "../../shared/types.js";
 import { MONITOR_MAX_BUYS, objectAt, readJson, writeJsonAtomic, type JsonObject, type SiteAdapter } from "./adapter.js";
 
@@ -30,6 +30,14 @@ const SESSION = "naver_session.json";
  * src/legacy/contract.ts 가 본다. README: "2초마다 보면 네이버는 로그인 세션째로 막는다."
  */
 export const NAVER_RATE = { warn: 10, hard: 30 } as const;
+
+/** 스토어 검색 태스크가 설정의 searches 에 적는 한 줄. 원본 config.ts 의 parseSearch 가 읽는다 — src/legacy/contract.ts 가 본다. */
+export interface NaverSearchEntry {
+  url: string;
+  ea: number;
+  option: string;
+  max_price: number;
+}
 
 const entryOf = (s: SiteSettings) => join(s.root, "src", "cli.ts");
 /** cli.ts 의 ROOT — `resolve(import.meta.dirname, "..", "..")`, 곧 naver/ts 의 위. */
@@ -289,20 +297,25 @@ export const naver: SiteAdapter = {
 
     // 씨앗을 베끼고 **감시 대상과 살 대상을 이 태스크의 상품 하나로** 바꾼다. 카테고리 감시는
     // 태스크 몫이 아니라 뺀다. 비밀번호는 비워 둔다 (환경변수로 간다).
+    // 스토어 검색이면 상품·살 대상을 비우고 searches 에 그 검색 하나를 적는다 — 원본이 걸린 상품을 살 대상으로 넣는다
+    // (원본 search.ts). 씨앗의 searches 는 늘 뺀다 (태스크는 제 것 하나만).
     const seed = readJson(s.seed) ?? {};
     const url = task.url.trim();
+    const search = isNaverSearch(url);
     const timing = timingFields(task, seed);
+    const one = { ea: task.ea || 1, option: task.option, max_price: task.max_price || 0 };
     const cfg = {
       ...seed,
       ...timing.top,
       ...(common.webhook ? { discord_webhook_url: common.webhook } : {}),
-      products: [url],
+      products: search ? [] : [url],
       categories: [],
+      searches: search ? [{ url, ...one } satisfies NaverSearchEntry] : [],
       buy: {
         ...objectAt(seed, "buy"),
         ...timing.buy,
         pg_password: "",
-        targets: [{ url, ea: task.ea || 1, option: task.option, max_price: task.max_price || 0, label: task.label }],
+        targets: search ? [] : [{ url, ...one, label: task.label }],
       },
     };
     writeFileSync(config, JSON.stringify(cfg, null, 2) + "\n", "utf-8");
@@ -338,8 +351,13 @@ export const naver: SiteAdapter = {
 
   // 원본 watch.ts 는 확인할 때마다 상품마다 "이름 — 품절 (재고 0)" 을 찍는다. 단계는 order.ts 의 말들
   // ("…창에서 직접 해주세요/넣어주세요", "구매 창 N개가 열려 있습니다", "⭐ 결제 완료", "⭐ 마지막 확인까지 눌렀습니다").
+  // 원본 watch.ts 가 확인마다 찍는 "포켓몬 카드 게임 MEGA 확장팩 「인페르노X」 — 판매중지 (재고 0개)" (모니터 로그에서
+  // 본 그대로 — 앞에 시각·[INFO] 가 붙는 판도 받는다). 이름에 " — " 가 들어 있어도 마지막 것 앞까지가 이름이다.
+  // 네이버는 바깥에서 따로 읽지 않는다 — 요청률 합을 세는 사이트라 이름 하나 때문에 두드리지 않는다.
+  productNameLine: /^(?:\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \[INFO\] )?(.+?) — [^—]+ \(재고 [^)]*\)$/,
   progress: {
-    round: / — .+ \(재고 [^)]*\)$/,
+    // 스토어 검색 태스크는 상품 줄이 없다 — 원본 search.ts 가 바퀴마다 찍는 검색 줄로 센다.
+    round: / — .+ \(재고 [^)]*\)$|검색 — \d+개 중 /,
     buying: /구매 가능, 구매하기를 누릅니다/,
     checkout: /직접 (?:해|넣어)주세요|구매 창 \d+개가 열려 있습니다|간편결제 비밀번호까지 넣었습니다/,
     paid: /⭐ (?:결제 완료|마지막 확인까지 눌렀습니다)/,

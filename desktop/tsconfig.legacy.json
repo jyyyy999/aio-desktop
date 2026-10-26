@@ -14,6 +14,7 @@
       "@lotte/*": ["../node/src/lotte-test/*"],
       "@bnkr/*": ["../node/src/bnkr-test/*"],
       "@supreme/*": ["../node/src/supreme/*"],
+      "@kream/*": ["../node/src/kream/*"],
       "@naver/*": ["../../naver/ts/src/*"]
     }
   },

@@ -32,3 +32,13 @@ chrome-profile/
 chrome-profile-*/
 *.bak-*
 *.bak-dedupe
+
+# ── 결제 비밀번호·로그인 정보 ─────────────────────────────────────────────
+# KREAM 결제 비밀번호 입력 코드 — 이 PC 에만 둔다 (2026-10-26). buy.ts 가 들이므로 새로 받은 곳에서는 이 파일을
+# 따로 넣어야 빌드된다.
+node/src/kream/pin.ts
+# 프로필·태스크 폴더에 생기는 비밀 (지금은 앱 데이터 폴더에 있지만 저장소 안으로 옮겨 와도 딸려 가지 않게)
+*.enc
+*-cookie.txt
+*-shots/
+supreme-order.json

@@ -122,6 +122,15 @@ function opensAtOf(data: JsonObject): number | null {
   return null;
 }
 
+/** 상품 API 의 이름 (원본 product.ts 와 같은 칸 — basicInfo.pdNm). */
+async function productName(url: string): Promise<string | null> {
+  const { sitm } = itemOf(url);
+  const api = `${STOCK_API}/${encodeURIComponent(sitm)}?sitmNo=${encodeURIComponent(sitm)}&isNotContainOptMapping=true`;
+  const data = ((JSON.parse(await peekGet(api)) as JsonObject)["data"] ?? {}) as JsonObject;
+  const basic = (data["basicInfo"] ?? {}) as JsonObject;
+  return String(basic["pdNm"] ?? basic["spdNm"] ?? "").trim() || null;
+}
+
 async function peekQueue(task: TaskDef): Promise<Omit<QueuePeek, "taskId" | "at">> {
   const { sitm, page } = itemOf(task.url);
   const api = `${STOCK_API}/${encodeURIComponent(sitm)}?sitmNo=${encodeURIComponent(sitm)}&isNotContainOptMapping=true`;
@@ -446,6 +455,7 @@ export const lotte: SiteAdapter = {
   },
 
   peekQueue,
+  productName,
 
   session: {
     loginUrl: LOGIN_URL,

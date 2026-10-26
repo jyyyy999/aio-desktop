@@ -6,7 +6,7 @@
  * 멈추고 같은 대상으로 지금 구매 태스크를 띄운다 (저절로는 안 한다).
  */
 import { useEffect, useState } from "react";
-import { MONITOR_RUNNING, MONITOR_STATUS_LABEL, ON_FOUND_LABEL } from "../shared/monitors";
+import { MONITOR_RUNNING, MONITOR_STATUS_LABEL, monitorShownName, ON_FOUND_LABEL } from "../shared/monitors";
 import { SITES } from "../shared/sites";
 import type { LogLine, MonitorEntry, Profile } from "../shared/types";
 import { errText, LOGIN_LABEL, LogView, mergeLogs, span } from "./App";
@@ -39,8 +39,11 @@ export function MonitorPopup({ monitorId }: { monitorId: string }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [now, setNow] = useState(Date.now());
+  /** 상품 이름 (productKey → 이름) — 이름을 비워 둔 모니터는 상품번호 대신 이것을. */
+  const [productNames, setProductNames] = useState<Record<string, string>>({});
 
   useEffect(() => {
+    void aio.productNames().then(setProductNames);
     void aio.monitor.list().then((list) => {
       const mine = list.find((e) => e.def.id === monitorId);
       if (mine) setEntry(mine);
@@ -50,6 +53,7 @@ export function MonitorPopup({ monitorId }: { monitorId: string }) {
     // 받아 오는 사이에 흘러온 줄이 이미 붙어 있을 수 있다. 번호로 이어 붙인다.
     void aio.monitor.getLogs(monitorId).then((list) => setLogs((streamed) => mergeLogs(list, streamed).slice(-KEEP)));
     const offs = [
+      aio.onProductNames(setProductNames),
       aio.monitor.onUpdate((e) => {
         if (e.def.id === monitorId) setEntry(e);
       }),
@@ -72,12 +76,13 @@ export function MonitorPopup({ monitorId }: { monitorId: string }) {
   const def = entry?.def;
   const state = entry?.state;
   const found = state?.status === "found" && state.foundAt !== dismissed;
+  const name = def ? monitorShownName(def, productNames) : "";
 
   useEffect(() => {
     if (!def || !state) return;
     const head = found ? "🔴 재고 발견!" : `${MONITOR_DOT[state.status]} 모니터`;
-    document.title = `${head} — ${SITES[def.site].name} ${def.name}`;
-  }, [def, state, found]);
+    document.title = `${head} — ${SITES[def.site].name} ${name}`;
+  }, [def, state, found, name]);
 
   if (gone) return <div className="monitor-popup"><div className="empty">모니터가 지워졌습니다.</div></div>;
   if (!def || !state || !entry) return <div className="monitor-popup"><div className="empty">불러오는 중…</div></div>;
@@ -106,22 +111,22 @@ export function MonitorPopup({ monitorId }: { monitorId: string }) {
     <div className={`monitor-popup ${found ? "found" : ""}`}>
       <header className="tw-head">
         <span>📊</span>
-        <span className="tw-title">{SITES[def.site].name} - {def.name}</span>
+        <span className="tw-title">{SITES[def.site].name} - {name}</span>
         <span className="grow" />
-        <span className={`pill mon ${state.status}`}>{MONITOR_DOT[state.status]} {MONITOR_STATUS_LABEL[state.status]}</span>
+        <span className={`pill mon ${state.status}`}>{MONITOR_STATUS_LABEL[state.status]}</span>
       </header>
 
       {found && (
         <section className="found-panel">
           <div className="found-big">🎯 재고 발견!</div>
-          <div>{SITES[def.site].name} - {def.name}</div>
+          <div>{SITES[def.site].name} - {name}</div>
           <div className="muted">발견 시간: {clockOf(state.foundAt)}</div>
           <div className="account-actions">
             {def.onFound === "switch_to_task" && (
               <button
                 type="button" className="btn buy" disabled={busy}
                 onClick={() => void act(async () => {
-                  const taskId = await switchMonitor(entry, profiles);
+                  const taskId = await switchMonitor(entry, profiles, name);
                   if (taskId) setMsg({ ok: true, text: "구매 태스크로 전환했습니다 — 메인 창의 태스크 목록에서 볼 수 있습니다." });
                 })}
               >
@@ -177,7 +182,7 @@ export function MonitorPopup({ monitorId }: { monitorId: string }) {
 
       <section className="mon-target-box">
         <div className="l muted small">대상 정보</div>
-        <div>제품: <b>{def.name}</b> <span className="muted small">{SITES[def.site].productCode(def.productUrl)}</span></div>
+        <div>제품: <b>{name}</b> <span className="muted small">{SITES[def.site].productCode(def.productUrl)}</span></div>
         <div>옵션: {def.option || <span className="muted">없음</span>} · 수량 {def.ea}</div>
         <div>상한가: {def.maxPrice ? `${def.maxPrice.toLocaleString()}원` : <span className="muted">무제한</span>}</div>
         <div className="muted small">

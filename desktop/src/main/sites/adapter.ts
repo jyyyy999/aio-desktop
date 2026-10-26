@@ -110,6 +110,12 @@ export interface SessionSpec {
   deadLine: RegExp;
   login: WindowLogin | LegacyLogin;
   pin: PinSpec;
+  /**
+   * 자동 로그인 — 프로필에 이메일·비밀번호를 암호화해 두면(SessionManager.setLoginCredentials) 로그인 명령과 태스크를
+   * 띄울 때 풀어서 이 환경변수로 넘긴다. 원본이 로그인 화면을 채우고, 태스크 도중에 로그인이 풀려도 다시 로그인한다.
+   * 없으면 그 사이트는 자동 로그인을 받지 않는다 (KREAM 만 있다).
+   */
+  credentials?: { emailEnv: string; passwordEnv: string };
 }
 
 /**
@@ -230,6 +236,40 @@ export interface SiteAdapter {
    * 태스크 창이 켰을 때만 main 이 몇 초마다 부른다. 못 읽으면 error 에 까닭.
    */
   peekQueue?(task: TaskDef): Promise<Omit<QueuePeek, "taskId" | "at">>;
+  /**
+   * 상품 이름을 바깥에서 한 번 읽는다 — 쿠키 없이, 상품마다 한 번 (main/productNames.ts 가 적어 둔다). 표의 상품 칸이
+   * 상품번호 대신 이름을 보이게. 못 읽으면 null. 없는 사이트는 원본 출력(productNameLine)에서만 안다.
+   */
+  productName?(url: string): Promise<string | null>;
+  /** 원본이 상품 이름을 찍는 줄. 첫 묶음이 이름이다. */
+  productNameLine?: RegExp;
+}
+
+/** 상품 이름을 읽을 때 보내는 브라우저 이름 (롯데 원본 http.ts 와 같은 것). */
+export const PAGE_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36";
+
+/** 쿠키 없이 한 번 받는다. 8초 안에 안 오면 포기. */
+export async function fetchText(url: string): Promise<string> {
+  const res = await fetch(url, {
+    headers: { "User-Agent": PAGE_UA, "Accept-Language": "ko-KR,ko;q=0.9" },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.text();
+}
+
+/** HTML 의 og:title (없으면 <title>). 엔티티는 흔한 것만 푼다. */
+export function htmlTitle(html: string): string | null {
+  const raw = /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i.exec(html)?.[1]
+    ?? /<title[^>]*>([^<]+)<\/title>/i.exec(html)?.[1];
+  if (!raw) return null;
+  // 숫자 코드(&#x2F; · &#47;)도 푼다 — KREAM 은 "K/DA" 를 "K&#x2F;DA" 로 보낸다.
+  const text = raw
+    .replace(/&#x([0-9a-f]+);/gi, (_, h: string) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d: string) => String.fromCodePoint(Number(d)))
+    .replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").trim();
+  return text || null;
 }
 
 /** 원본이 읽는 도중에 반쯤 쓰인 파일을 보지 않게, 옆에 쓰고 바꿔치기한다. */

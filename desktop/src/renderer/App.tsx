@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  FIELD_LABEL, isDiscordWebhook, LOGIN_LOG_PREFIX, loginLog, MODE_LABEL, PAYMENT_PIN_DIGITS, pinMatters, planDrop, PREPARE_LOG,
-  REPEATING_MODES, SITE_IDS, SITES, siteLog, siteOfUrl, TIMING_BLANK,
+  bnkrKeywordText, FIELD_LABEL, isDiscordWebhook, isKeywordTask, naverKeywordText, LOGIN_LOG_PREFIX, loginLog, MODE_LABEL, modesOf, PAYMENT_PIN_DIGITS,
+  pinMatters, planDrop, PREPARE_LOG, productKey, REPEATING_MODES, SITE_IDS, SITES, siteLog, siteOfUrl, TIMING_BLANK,
 } from "../shared/sites";
 import type {
   DropSettings, LoginStatus, LogLine, MonitorEntry, MonitorFound, MonitorStatus, OrderAction, Profile, ReleaseList, Settings, SiteId, SiteInfo,
   TaskDef, TaskMode, TaskRuntime, TaskStatus, TimingDefaults,
 } from "../shared/types";
 import { FoundAlerts, MONITOR_LOG, MonitorsPage } from "./Monitors";
+import { monitorShownName } from "../shared/monitors";
 import { isPast, isToday, ReleasesPage } from "./Releases";
 import { SupremeOrderPage } from "./SupremeOrder";
+import { Icon, LogoMark } from "./icons";
 import {
   SUPREME_CATEGORIES, describeSupremeCategories, describeSupremeOption, hasSupremeKeyword, isSupremeProductUrl,
   joinSupremeOption, shortSupremeSize, splitSupremeOption, SUPREME_SIZE_GROUPS, supremeCategories, supremeKeywords,
@@ -192,8 +194,19 @@ function actionLabel(t: TaskDef): string {
   return t.action ? SITES[t.site].actionLabel[t.action] : "설정 따름";
 }
 
-/** 표·태스크 창의 상품 칸 — 슈프림 키워드는 키워드를 이름으로, 카테고리·색·사이즈를 아래 줄로. */
-export function targetText(t: TaskDef): { name: string; sub: string } {
+/** 상품 이름 — 붙인 이름, 없으면 상품 주소에서 읽어 둔 이름 (main 의 productNames), 그것도 없으면 상품번호. */
+export function taskName(t: TaskDef, names: Record<string, string>): string {
+  return t.label || names[productKey(t.site, t.url)] || SITES[t.site].productCode(t.url);
+}
+
+/**
+ * 표·태스크 창의 상품 칸 — 슈프림 키워드는 키워드를 이름으로, 카테고리·색·사이즈를 아래 줄로.
+ * names 는 상품 주소에서 읽어 둔 이름 (붙인 이름이 없을 때 상품번호 대신 보인다 — 상품번호는 아래 줄에 남는다).
+ */
+/** 키워드 태스크의 보일 키워드. 네이버는 "키워드 @스토어". */
+const keywordText = (t: Pick<TaskDef, "site" | "url">): string => (t.site === "naver" ? naverKeywordText(t.url) : bnkrKeywordText(t.url));
+
+export function targetText(t: TaskDef, names: Record<string, string> = {}): { name: string; sub: string } {
   const code = SITES[t.site].productCode(t.url);
   if (t.site === "supreme" && t.url.trim() && !isSupremeProductUrl(t.url)) {
     return {
@@ -201,8 +214,12 @@ export function targetText(t: TaskDef): { name: string; sub: string } {
       sub: [`카테고리 ${describeSupremeCategories(t.url)}`, describeSupremeOption(t.option)].filter(Boolean).join(" · "),
     };
   }
+  // 키워드 (반다이남코 검색 · 네이버 스토어 검색) — 검색 결과에 새로 올라오는 것을 기다린다.
+  if (isKeywordTask(t)) {
+    return { name: t.label || keywordText(t), sub: "키워드 · 새로 올라오거나 품절이 풀리면" };
+  }
   const option = t.site === "supreme" ? describeSupremeOption(t.option) : t.option;
-  return { name: t.label || code, sub: [code, option].filter(Boolean).join(" · ") };
+  return { name: t.label || names[productKey(t.site, t.url)] || code, sub: [code, option].filter(Boolean).join(" · ") };
 }
 
 function clock(ms: number): string {
@@ -235,6 +252,8 @@ export function App() {
   const [foundAlerts, setFoundAlerts] = useState<MonitorFound[]>([]);
   /** 발매정보 — 수동 항목과 태스크에서 만든 자동 항목. main 이 바뀔 때마다 통째로 보낸다. */
   const [releases, setReleases] = useState<ReleaseList | null>(null);
+  /** 상품 이름 (productKey → 이름). 이름을 안 붙인 태스크의 상품 칸에 상품번호 대신 보인다. */
+  const [productNames, setProductNames] = useState<Record<string, string>>({});
   const [now, setNow] = useState(Date.now());
   /** 결제 비밀번호 창을 연 프로필. */
   const [pinFor, setPinFor] = useState<string | null>(null);
@@ -267,6 +286,7 @@ export function App() {
     void aio.listProfiles().then(setProfiles);
     void aio.monitor.list().then(setMonitors);
     void aio.release.list().then(setReleases);
+    void aio.productNames().then(setProductNames);
     refreshInfo();
     const offRt = aio.onRuntime((rt) => setRuntimes((prev) => ({ ...prev, [rt.id]: rt })));
     const offProfile = aio.onProfile(upsertProfile);
@@ -296,9 +316,11 @@ export function App() {
       setSelected(taskId);
     });
     const offReleases = aio.release.onChanged(setReleases);
+    const offNames = aio.onProductNames(setProductNames);
     const tick = setInterval(() => setNow(Date.now()), 1000);
     return () => {
       offReleases();
+      offNames();
       offRt();
       offProfile();
       offTasks();
@@ -348,7 +370,7 @@ export function App() {
   };
 
   const removeTask = async (t: TaskDef) => {
-    if (!(await aio.ask(`'${t.label || SITES[t.site].productCode(t.url)}' 태스크를 지울까요? (돌고 있으면 멈춥니다)`))) return;
+    if (!(await aio.ask(`'${taskName(t, productNames)}' 태스크를 지울까요? (돌고 있으면 멈춥니다)`))) return;
     setTasks(await aio.deleteTask(t.id));
     if (selected === t.id) setSelected(null);
   };
@@ -406,7 +428,7 @@ export function App() {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <span className="dot" /> AIO <b>Task Manager</b>
+          <LogoMark /><span className="wordmark">AIO</span><span className="sub">TASK MANAGER</span>
         </div>
         <div className="stats">
           <Stat label="태스크" value={tasks.length} />
@@ -436,22 +458,22 @@ export function App() {
       <div className="body">
         <nav className="sidebar">
           <button type="button" className={`side-item ${view === "tasks" ? "on" : ""}`} onClick={() => setView("tasks")}>
-            <span>태스크</span><span className="count">{tasks.length}</span>
+            <span><Icon name="tasks" />태스크</span><span className="count">{tasks.length}</span>
           </button>
           <button type="button" className={`side-item ${view === "monitors" ? "on" : ""}`} onClick={() => setView("monitors")}>
-            <span>모니터{monitors.some((m) => m.state.status === "found") && <span className="found-dot" title="재고를 발견한 모니터가 있습니다" />}</span>
+            <span><Icon name="monitors" />모니터{monitors.some((m) => m.state.status === "found") && <span className="found-dot" title="재고를 발견한 모니터가 있습니다" />}</span>
             <span className="count">{monitors.length}</span>
           </button>
           <button type="button" className={`side-item ${view === "releases" ? "on" : ""}`} onClick={() => setView("releases")}>
-            <span>발매정보{releasesToday > 0 && <span className="today-dot" title={`오늘 발매 ${releasesToday}개`} />}</span>
+            <span><Icon name="releases" />발매정보{releasesToday > 0 && <span className="today-dot" title={`오늘 발매 ${releasesToday}개`} />}</span>
             <span className="count">{upcomingReleases.length}</span>
           </button>
           <button type="button" className={`side-item ${view === "profiles" ? "on" : ""}`} onClick={() => setView("profiles")}>
-            <span>프로필{issues.length > 0 && <span className="warn-dot" title="로그인이 필요한 태스크가 있습니다" />}</span>
+            <span><Icon name="profiles" />프로필{issues.length > 0 && <span className="warn-dot" title="로그인이 필요한 태스크가 있습니다" />}</span>
             <span className="count">{profiles.length}</span>
           </button>
           <button type="button" className={`side-item ${view === "supreme-order" ? "on" : ""}`} onClick={() => setView("supreme-order")}>
-            <span>슈프림 주문서</span>
+            <span><Icon name="order" />슈프림 주문서</span>
           </button>
         </nav>
         <div className="content">
@@ -473,7 +495,7 @@ export function App() {
               <ReleasesPage list={releases} now={now} onList={setReleases} />
             ) : view === "monitors" ? (
               <MonitorsPage
-                monitors={monitors} profiles={profiles} infos={infos} selected={selected} now={now}
+                monitors={monitors} profiles={profiles} infos={infos} selected={selected} now={now} productNames={productNames}
                 onSelect={setSelected}
                 onChanged={(list) => {
                   setMonitors(list);
@@ -518,7 +540,7 @@ export function App() {
                     {shown.map((t, i) => {
                       const rt = rtOf(t.id);
                       const live = LIVE.includes(rt.status);
-                      const target = targetText(t);
+                      const target = targetText(t, productNames);
                       const p = profileOf(t.profileId);
                       const issue = loginIssue(t, profiles);
                       // 한 프로필에 하나인 사이트(oneTaskPerProfile)에서 다른 태스크·모니터가 이 프로필을 쓰고 있으면 ▶ 가 거절된다.
@@ -623,8 +645,8 @@ export function App() {
                   로그 · <b>{selected === PREPARE_LOG ? "준비 (빌드·설치)"
                     : selectedProfile ? `${SITES[selectedProfile.site].name} · ${selectedProfile.name} (로그인·세션 확인)`
                     : selectedSite ? `${SITES[selectedSite].name} 공통 (간편결제 비밀번호)`
-                    : selectedMonitor ? `모니터 · ${SITES[selectedMonitor.def.site].name} ${selectedMonitor.def.name}`
-                    : selectedTask?.label || (selectedTask && SITES[selectedTask.site].productCode(selectedTask.url))
+                    : selectedMonitor ? `모니터 · ${SITES[selectedMonitor.def.site].name} ${monitorShownName(selectedMonitor.def, productNames)}`
+                    : (selectedTask && taskName(selectedTask, productNames))
                       || (view === "profiles" ? "프로필의 '로그' 를 누르세요" : view === "monitors" ? "모니터를 고르세요" : "태스크를 고르세요")}</b>
                 </span>
                 {selectedTask && (
@@ -887,6 +909,8 @@ function TaskForm({ task, infos, live, profiles, usersOf, onLogin, onUpsertProfi
   const valid = spec.isProductUrl(t.url);
   const supreme = t.site === "supreme";
   const productUrl = supreme && isSupremeProductUrl(t.url);
+  const keyword = isKeywordTask(t);
+  const modes = modesOf(t);
   const option = splitSupremeOption(t.option);
   // `#jackets` 만 적으면 그 컬렉션의 아무거나 살 수 있다 — 원본도 키워드 없이는 돌지 않는다.
   const keywordError = supreme && valid && !productUrl && !hasSupremeKeyword(t.url)
@@ -920,8 +944,8 @@ function TaskForm({ task, infos, live, profiles, usersOf, onLogin, onUpsertProfi
         ...(profileId ? { profileId } : {}),
         ...(payProfileId ? { payProfileId } : {}),
         action: prev.action && (SITES[site].actions as readonly string[]).includes(prev.action) ? prev.action : "",
-        // 드랍(--drop)은 롯데 원본에만 있다.
-        mode: SITES[site].modes.includes(prev.mode) ? prev.mode : "watch",
+        // 드랍(--drop)은 롯데 원본에만 있다. 반다이남코 키워드는 지켜보기·재고만뿐이다.
+        mode: modesOf({ site, url: prev.url }).includes(prev.mode) ? prev.mode : "watch",
       };
     });
 
@@ -929,7 +953,8 @@ function TaskForm({ task, infos, live, profiles, usersOf, onLogin, onUpsertProfi
     // 다른 사이트 주소를 붙여 넣으면 사이트를 따라 바꾼다.
     const guessed = siteOfUrl(url);
     if (guessed && guessed !== t.site) setSite(guessed);
-    set("url", url);
+    // 상품번호를 키워드로 바꾸면 그 키워드가 못 도는 모드(한 번만·지금 구매…)는 지켜보기로 되돌린다.
+    setT((prev) => ({ ...prev, url, mode: modesOf({ site: prev.site, url }).includes(prev.mode) ? prev.mode : "watch" }));
   };
 
   return (
@@ -965,13 +990,20 @@ function TaskForm({ task, infos, live, profiles, usersOf, onLogin, onUpsertProfi
           />
         )}
         <label>
-          {supreme ? "상품 주소 또는 키워드" : "상품 주소"}
+          {supreme || t.site === "bnkr" ? "상품 주소 또는 키워드" : t.site === "naver" ? "상품 주소 또는 스토어 검색 주소" : "상품 주소"}
           <input autoFocus value={t.url} placeholder={spec.placeholder} onChange={(e) => setUrl(e.target.value)} />
           {!valid && t.url && <span className="err">{spec.urlError}</span>}
           {keywordError && <span className="err">{keywordError}</span>}
         </label>
+        {keyword && (
+          <p className="muted small modal-text">
+            키워드 "{keywordText(t)}" 의 {t.site === "naver" ? "스토어 검색 결과" : "검색 결과"}를 확인 간격마다 훑습니다. 켤 때 보이던 상품은 기준선으로 두고, 그 뒤 <b>새로 올라오거나
+            품절이 풀린 상품</b>을 담습니다 — 켤 때 이미 판매 중인 것은 사지 않습니다. 여러 개가 올라오면 "최대 몇 번" 만큼 담습니다.
+            검색 결과 첫 장만 보니 키워드는 좁게 적으세요. 재고만은 지금 검색 결과(상품번호·품절 여부·값)를 한 번 보입니다.
+          </p>
+        )}
         <label>
-          <span>이름 <span className="muted">{supreme ? "(비워 두면 키워드·상품 handle)" : "(비워 두면 상품번호)"}</span></span>
+          <span>이름 <span className="muted">{supreme ? "(비워 두면 키워드·상품 handle)" : t.site === "bnkr" || t.site === "naver" ? "(비워 두면 상품번호·키워드)" : "(비워 두면 상품번호)"}</span></span>
           <input value={t.label} onChange={(e) => set("label", e.target.value)} />
         </label>
         {supreme ? (
@@ -1047,7 +1079,9 @@ function TaskForm({ task, infos, live, profiles, usersOf, onLogin, onUpsertProfi
               <label>
                 모드
                 <select value={t.mode} onChange={(e) => set("mode", e.target.value as TaskMode)}>
-                  {spec.modes.map((k) => <option key={k} value={k}>{MODE_LABEL[k]}</option>)}
+                  {modes.map((k) => (
+                    <option key={k} value={k}>{keyword && k === "status" ? "검색 결과 조회" : MODE_LABEL[k]}</option>
+                  ))}
                 </select>
               </label>
               <label>
@@ -1469,6 +1503,8 @@ function ProfilesPage({ profiles, tasks, runtimes, monitors, infos, selected, on
   const [site, setSite] = useState<Filter>("all");
   /** 만들기 창(null 이 아니면 열림) — edit 가 있으면 그 프로필을 고친다. */
   const [modal, setModal] = useState<{ edit: Profile | null } | null>(null);
+  /** 자동 로그인 창을 연 프로필 */
+  const [autoLoginFor, setAutoLoginFor] = useState<Profile | null>(null);
   const sites = site === "all" ? SITE_IDS : [site];
   return (
     <section className="profiles-page">
@@ -1485,14 +1521,17 @@ function ProfilesPage({ profiles, tasks, runtimes, monitors, infos, selected, on
         <button type="button" className="btn primary" onClick={() => setModal({ edit: null })}>+ 새 프로필</button>
       </div>
       <p className="muted small page-note">
-        로그인은 창 안에서 직접 합니다 (캡차·2단계 인증 포함). 매니저는 아이디·비밀번호를 보지도 적지도 않고, 로그인이 된 뒤의
-        쿠키·세션만 프로필 폴더에 적습니다. 태스크는 폼에서 프로필을 고릅니다.
+        로그인은 창 안에서 직접 합니다 (캡차·2단계 인증 포함). 매니저는 로그인이 된 뒤의 쿠키·세션만 프로필 폴더에 적습니다 —
+        아이디·비밀번호는 KREAM 의 <b>자동 로그인</b>을 넣었을 때만 암호화해 둡니다. 태스크는 폼에서 프로필을 고릅니다.
       </p>
       {modal && (
         <ProfileModal
           edit={modal.edit} site={site === "all" ? "lotte" : site} profiles={profiles}
           onSaved={onUpsert} onLogin={onLogin} onClose={() => setModal(null)}
         />
+      )}
+      {autoLoginFor && (
+        <AutoLoginModal profile={autoLoginFor} onSaved={onUpsert} onClose={() => setAutoLoginFor(null)} />
       )}
       {sites.map((id) => {
         const mine = profiles.filter((p) => p.site === id);
@@ -1511,6 +1550,7 @@ function ProfilesPage({ profiles, tasks, runtimes, monitors, infos, selected, on
                   logOpen={selected === loginLog(p.id)}
                   onLogin={() => onLogin(p.id)} onShowLog={() => onShowLog(loginLog(p.id))} onEdit={() => setModal({ edit: p })}
                   onPin={() => onPin(p.id)}
+                  onAutoLogin={() => setAutoLoginFor(p)}
                   onUpsert={onUpsert} onDeleted={onChanged}
                 />
               ))}
@@ -1646,16 +1686,17 @@ const LOGIN_HOW: Record<SiteId, string> = {
   lotte: "로그인 창이 뜨면 창 안에서 직접 로그인하세요 (캡차·2단계 인증 포함).",
   naver: "원본의 로그인 창(--login)이 뜨면 창 안에서 직접 로그인하세요.",
   bnkr: "로그인 창이 뜨면 창 안에서 직접 로그인하세요 (reCAPTCHA 포함). 토큰이 한 시간짜리라 오래 두었으면 다시 로그인하세요.",
+  kream: "크롬 창이 뜨면 창 안에서 직접 로그인하세요 (휴대폰 인증 포함). 로그인되면 창이 저절로 닫히고, 쿠키가 태스크의 크롬에 심어집니다.",
 };
 
-function ProfileCard({ p, assigned, users, logOpen, onLogin, onShowLog, onEdit, onPin, onUpsert, onDeleted }: {
+function ProfileCard({ p, assigned, users, logOpen, onLogin, onShowLog, onEdit, onPin, onAutoLogin, onUpsert, onDeleted }: {
   p: Profile;
   /** 이 프로필을 고른 태스크 수. */
   assigned: number;
   /** 이 프로필로 지금 도는(예약 포함) 태스크·모니터. */
   users: string[];
   logOpen: boolean;
-  onLogin: () => void; onShowLog: () => void; onEdit: () => void; onPin: () => void;
+  onLogin: () => void; onShowLog: () => void; onEdit: () => void; onPin: () => void; onAutoLogin: () => void;
   onUpsert: (p: Profile) => void; onDeleted: (list: Profile[]) => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -1714,6 +1755,15 @@ function ProfileCard({ p, assigned, users, logOpen, onLogin, onShowLog, onEdit, 
         {p.hasPaymentPin ? <span className="ok">설정됨</span> : <span className="warn-text">미설정 — 결제 단계에서 사람이 넣습니다</span>}
         <button type="button" className="btn small ghost" disabled={busy} onClick={onPin}>{p.hasPaymentPin ? "바꾸기" : "넣기"}</button>
       </div>
+      {p.canAutoLogin && (
+        <div className="small pin-line">
+          <span className="muted">자동 로그인</span>
+          {p.hasLoginCredentials
+            ? <span className="ok">설정됨{p.loginEmailHint && ` · ${p.loginEmailHint}`}</span>
+            : <span className="warn-text">미설정 — 로그인이 풀리면 사람이 다시 로그인합니다</span>}
+          <button type="button" className="btn small ghost" disabled={busy} onClick={onAutoLogin}>{p.hasLoginCredentials ? "바꾸기" : "넣기"}</button>
+        </div>
+      )}
       <div className="muted small path" title={p.cookiesPath}>{p.cookiesPath}</div>
       <div className="account-actions">
         {loggingIn ? (
@@ -1840,6 +1890,88 @@ function PinModal({ profile, info, onSaved, onClose }: {
   );
 }
 
+/**
+ * 자동 로그인 창 (KREAM). 이메일·비밀번호를 받아 main 이 결제 비밀번호처럼 암호화해 프로필 폴더에 적는다. 값은 이 창의
+ * 입력칸에만 있다가 저장하면 비우고 닫는다 — main 은 가린 이메일만 돌려준다.
+ */
+function AutoLoginModal({ profile, onSaved, onClose }: { profile: Profile; onSaved: (p: Profile) => void; onClose: () => void }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [show, setShow] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [fail, setFail] = useState<string | null>(null);
+  const ready = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) && password.length > 0;
+
+  const act = async (fn: () => Promise<Profile>) => {
+    setBusy(true);
+    setFail(null);
+    try {
+      const p = await fn();
+      setPassword("");
+      onSaved(p);
+      onClose();
+    } catch (e) {
+      setFail(errText(e));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="modal-back" onClick={onClose}>
+      <form
+        className="modal narrow-modal"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") onClose();
+        }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (ready && !busy) void act(() => aio.setProfileLogin(profile.id, email.trim(), password));
+        }}
+      >
+        <h2>자동 로그인</h2>
+        <div className="static"><SiteTag site={profile.site} /> {profile.name}{profile.memo && <span className="muted"> · {profile.memo}</span>}</div>
+        <p className="muted small modal-text">
+          지금 {profile.hasLoginCredentials ? `저장돼 있습니다${profile.loginEmailHint ? ` (${profile.loginEmailHint})` : ""}` : "없습니다"}.
+          {" "}{SITES[profile.site].name} 에 이메일로 로그인하는 계정을 넣으세요.
+        </p>
+        <label>
+          이메일
+          <input type="email" autoComplete="off" autoFocus value={email} onChange={(e) => setEmail(e.target.value)} />
+        </label>
+        <label>
+          비밀번호
+          <div className="pin-field">
+            <input type={show ? "text" : "password"} autoComplete="off" value={password} onChange={(e) => setPassword(e.target.value)} />
+            <button type="button" className="icon" title={show ? "가리기" : "보기"} onClick={() => setShow((v) => !v)}>{show ? "🙈" : "👁"}</button>
+          </div>
+        </label>
+        <p className="hint">
+          로그인 버튼을 누르면 화면 밖 크롬에서 이 계정으로 로그인합니다. 태스크 도중에 로그인이 풀려도 원본이 다시 로그인합니다.
+          캡차·본인 인증이 뜨면 대신 풀지 않고 창을 띄워 넘깁니다.
+        </p>
+        <p className="muted small modal-text">
+          결제 비밀번호와 같이 암호화해서 이 프로필 폴더에만 저장합니다 (이 PC 의 이 윈도 계정에서만 풀립니다). 로그·화면에는
+          나오지 않고, 로그인·태스크를 띄울 때만 풀어 원본에 넘깁니다.
+        </p>
+        {fail && <span className="err small">{fail}</span>}
+        <div className="modal-actions">
+          {profile.hasLoginCredentials && (
+            <button
+              type="button" className="btn ghost" disabled={busy}
+              onClick={() => void aio.ask(`'${profile.name}' 의 자동 로그인 정보를 지울까요? 로그인이 풀리면 사람이 다시 로그인해야 합니다.`)
+                .then((ok) => { if (ok) void act(() => aio.clearProfileLogin(profile.id)); })}
+            >지우기</button>
+          )}
+          <span className="grow" />
+          <button type="button" className="btn ghost" onClick={onClose}>취소</button>
+          <button type="submit" className="btn primary" disabled={!ready || busy}>저장</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 /** ▶ 를 눌렀는데 결제 비밀번호가 쓰일 태스크의 프로필에 비밀번호가 없다. 실패하는 것은 아니다 — 사람이 넣으면 된다. */
 function PinAskModal({ profile, onSetPin, onStart, onClose }: {
   profile: Profile; onSetPin: () => void; onStart: () => void; onClose: () => void;
@@ -1866,6 +1998,7 @@ const ROOT_HINT: Record<SiteId, string> = {
   lotte: "원본 프로젝트 (aio/node) — dist/lotte-test/index.js 를 들인다",
   naver: "원본 프로젝트 (naver/ts) — src/cli.ts 를 tsx 로 들인다",
   bnkr: "원본 프로젝트 (aio/node) — dist/bnkr-test/index.js 를 들인다",
+  kream: "원본 프로젝트 (aio/node) — dist/kream/index.js 를 들인다 (브랜드배송 상품을 로그인된 크롬으로 보고 산다)",
 };
 
 function SettingsForm({ infos, profiles, preparing, onPrepare, onSaved, onClose }: {

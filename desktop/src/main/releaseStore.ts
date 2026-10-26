@@ -14,7 +14,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isHttpUrl, releaseProblem, tidyRelease } from "../shared/releases.js";
-import { planDrop, SITES } from "../shared/sites.js";
+import { planDrop, productKey, SITES } from "../shared/sites.js";
 import type { Release, ReleaseInput, ReleaseList, TaskDef, TaskRuntime } from "../shared/types.js";
 
 interface Saved {
@@ -110,7 +110,7 @@ export class ReleaseStore {
   }
 
   /** 태스크에서 만든 자동 항목. 숨긴 것도 포함. */
-  private auto(tasks: TaskDef[], runtimes: TaskRuntime[]): Release[] {
+  private auto(tasks: TaskDef[], runtimes: TaskRuntime[], names: Record<string, string>): Release[] {
     const out: Release[] = [];
     const at = now();
     for (const t of tasks) {
@@ -126,7 +126,7 @@ export class ReleaseStore {
         : `드랍 태스크의 드랍 시각 ${clockOf(drop!)}${rt?.dropAt ? " (예약됨)" : " — 날짜 없이 매일 그 시각이라 다음 드랍으로 셉니다"}`;
       out.push({
         id: autoId(t.id),
-        name: t.label || SITES[t.site].productCode(t.url) || "(이름 없음)",
+        name: t.label || names[productKey(t.site, t.url)] || SITES[t.site].productCode(t.url) || "(이름 없음)",
         store: SITES[t.site].name,
         releaseAt: new Date(when).toISOString(),
         method: "fcfs",
@@ -144,8 +144,9 @@ export class ReleaseStore {
     return out;
   }
 
-  list(tasks: TaskDef[], runtimes: TaskRuntime[]): ReleaseList {
-    const auto = this.auto(tasks, runtimes);
+  /** names — 상품 이름 (main/productNames.ts). 이름을 안 붙인 태스크의 자동 항목에 쓴다. */
+  list(tasks: TaskDef[], runtimes: TaskRuntime[], names: Record<string, string>): ReleaseList {
+    const auto = this.auto(tasks, runtimes, names);
     const shown = auto.filter((r) => !this.data.hiddenAuto.includes(r.id));
     return { items: [...this.data.releases, ...shown], hiddenAuto: auto.length - shown.length, path: this.path };
   }

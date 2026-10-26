@@ -28,6 +28,8 @@ interface Payload {
 }
 
 const now = () => new Date().toISOString();
+/** 이름 맞대기 — 띄어쓰기·대소문자는 화면마다 다르다. */
+const squash = (s: string) => s.replace(/\s+/g, "").toLowerCase();
 
 export async function postDiscord(webhookUrl: string, payload: Payload): Promise<boolean> {
   if (run.dryRun) {
@@ -188,9 +190,14 @@ export interface PaidInfo { order_no?: string; name?: string; image?: string }
 export function notifyPaid(
   cfg: Config, goods: { gno?: string; name: string }, info: PaidInfo = {},
 ): Promise<boolean> {
-  const name = info.name || goods.name;
+  // **이름은 우리가 담은 것을 믿는다.** 완료 화면에서 읽은 이름·사진은 그 화면의 첫 상품 링크·첫 큰 그림이라, 추천
+  // 상품이나 배너가 걸리면 엉뚱한 상품으로 온다 (2026-10-23 결제 완료 알림이 이상하게 왔다). 화면에서 읽은 이름이
+  // 담은 것과 같을 때만 그 사진을 곁들인다.
+  const name = goods.name || info.name || "";
+  const same = !!info.name && !!goods.name && squash(info.name) === squash(goods.name);
   const lines = ["주문이 끝났습니다."];
   if (info.order_no) lines.push(`주문번호 **${info.order_no}**`);
+  if (goods.gno) lines.push(`상품번호 ${goods.gno}`);
 
   const embed: Embed = {
     title: `✅ 결제 완료 — ${name}`.slice(0, 250),
@@ -200,8 +207,8 @@ export function notifyPaid(
     timestamp: now(),
   };
   if (goods.gno) embed.url = goodsUrl(goods.gno);
-  // 상품 사진은 작게 곁들인다.
-  if (info.image) embed.thumbnail = { url: info.image };
+  // 상품 사진은 작게 곁들인다 — 담은 그 상품의 것일 때만.
+  if (info.image && same) embed.thumbnail = { url: info.image };
 
   return postDiscord(pgWebhookOf(cfg), {
     content: cfg.pg_mention || null,

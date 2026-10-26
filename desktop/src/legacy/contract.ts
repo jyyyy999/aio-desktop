@@ -11,18 +11,23 @@
  * 칸, 모니터가 적는 칸)이 원본이 받는 것과 같은지 본다. 원본이 바뀌어 어긋나면 typecheck 가 여기서 깨진다.
  */
 import type { ACTIONS as LotteActions, Config as LotteConfig, TargetSpec } from "@lotte/config.js";
-import type { ACTIONS as NaverActions, BuyConfig as NaverBuyConfig, Config as NaverConfig } from "@naver/types.js";
+import type {
+  ACTIONS as NaverActions, BuyConfig as NaverBuyConfig, Config as NaverConfig, SearchSpec as NaverSearchSpec,
+} from "@naver/types.js";
 import type { LOGIN_PATH as LotteLoginPath } from "@lotte/http.js";
 import type { RATE_HARD_PER_MIN, RATE_WARN_PER_MIN } from "@naver/watch.js";
 import type { ACTIONS as BnkrActions } from "@bnkr/browser.js";
 import type { Config as BnkrConfig } from "@bnkr/config.js";
 import type { Target as BnkrTarget } from "@bnkr/targets.js";
-import type { BnkrTaskTarget, BnkrTimingFields } from "../main/sites/bnkr.js";
+import type { DiscoverSpec as BnkrDiscoverSpec } from "@bnkr/config.js";
+import type { BnkrDiscoverEntry, BnkrKeywordFields, BnkrTaskTarget, BnkrTimingFields } from "../main/sites/bnkr.js";
 import type { SupremeMonitorFields, SupremeTaskTarget, SupremeTimingFields } from "../main/sites/supreme.js";
 import type { BuyConfig, SupremeConfig, Target as SupremeTarget } from "@supreme/config.js";
 import type { LOTTE_LOGIN_PATH, LotteMonitorFields, LotteTaskTarget, LotteTimingFields } from "../main/sites/lotte.js";
-import type { NAVER_RATE, NaverMonitorFields } from "../main/sites/naver.js";
-import type { BNKR_ACTIONS, LOTTE_ACTIONS, NAVER_ACTIONS } from "../shared/sites.js";
+import type { NAVER_RATE, NaverMonitorFields, NaverSearchEntry } from "../main/sites/naver.js";
+import type { BNKR_ACTIONS, KREAM_ACTIONS, LOTTE_ACTIONS, NAVER_ACTIONS } from "../shared/sites.js";
+import type { ACTIONS as KreamActions, KreamConfig, Target as KreamTarget } from "@kream/config.js";
+import type { KreamMonitorFields, KreamTaskTarget, KreamTimingFields } from "../main/sites/kream.js";
 
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 type Assert<T extends true> = T;
@@ -64,6 +69,10 @@ export type Contract = [
   Assert<NaverMonitorFields["top"]["categories"] extends NaverConfig["categories"] ? true : false>,
   Assert<Pick<NaverBuyConfig, "buyOnRestockOnly" | "stopAfterSuccess"> extends Record<string, boolean> ? true : false>,
   Assert<Pick<NaverBuyConfig, "maxBuysPerRun" | "cooldownMinutes"> extends Record<string, number> ? true : false>,
+  // 네이버 스토어 검색: 원본이 searches 를 읽어 옮긴 칸 (max_price → maxPrice 말고는 이름이 같다)
+  Assert<Pick<NaverSearchEntry, "url" | "ea" | "option"> extends Pick<NaverSearchSpec, "url" | "ea" | "option"> ? true : false>,
+  Assert<NaverSearchEntry["max_price"] extends NaverSearchSpec["maxPrice"] ? true : false>,
+  Assert<NaverConfig["searches"] extends NaverSearchSpec[] ? true : false>,
   // 반다이남코: --action 값 = 원본 ACTIONS
   Assert<Same<(typeof BNKR_ACTIONS)[number], (typeof BnkrActions)[number]>>,
   // 대상 한 줄은 원본 parseTarget 이 읽어 Target 으로 만드는 칸이고 타입이 맞다 (label 은 원본에서 null 도 된다)
@@ -75,6 +84,12 @@ export type Contract = [
   // 태스크 설정에 비우거나 적는 칸 (쿠키·비밀번호·웹훅·네이버 세션 경로·목록 훑기)
   Assert<"cookie" | "pg_password" | "discord_webhook_url" | "naver_session" | "discover" | "targets" extends KnownKeys<BnkrConfig> ? true : false>,
   Assert<Pick<BnkrConfig, "cookie" | "pg_password" | "discord_webhook_url" | "naver_session"> extends Record<string, string> ? true : false>,
+  // 키워드 태스크: 훑을 목록 한 줄은 원본 DiscoverSpec 의 칸이고, 고쳐 적는 칸은 원본 Config 에 이름이 박힌 칸이다
+  Assert<keyof BnkrDiscoverEntry extends keyof BnkrDiscoverSpec ? true : false>,
+  Assert<BnkrDiscoverEntry extends BnkrDiscoverSpec ? true : false>,
+  Assert<BnkrDiscoverEntry extends BnkrConfig["discover"][number] ? true : false>,
+  Assert<keyof BnkrKeywordFields extends KnownKeys<BnkrConfig> ? true : false>,
+  Assert<BnkrKeywordFields extends Pick<BnkrConfig, keyof BnkrKeywordFields> ? true : false>,
   // 슈프림: 우리가 태스크·모니터 홈에 적는 칸이 원본 설정에 이름이 박힌 칸이고 타입이 맞는가
   Assert<keyof SupremeTaskTarget extends KnownKeys<SupremeTarget> ? true : false>,
   Assert<Required<SupremeTaskTarget> extends Pick<SupremeTarget, keyof SupremeTaskTarget> ? true : false>,
@@ -83,4 +98,13 @@ export type Contract = [
   Assert<keyof SupremeMonitorFields extends KnownKeys<SupremeConfig> ? true : false>,
   Assert<keyof SupremeMonitorFields["buy"] extends KnownKeys<BuyConfig> ? true : false>,
   Assert<Pick<SupremeConfig, "targets" | "cookie" | "discord_webhook_url"> extends Pick<SupremeConfig, "targets"> ? true : false>,
+  // KREAM: --action 값 = 원본 ACTIONS, 우리가 적는 칸이 원본 설정에 이름이 박힌 칸이고 타입이 맞는가
+  Assert<Same<(typeof KREAM_ACTIONS)[number], (typeof KreamActions)[number]>>,
+  Assert<Same<keyof KreamTaskTarget, keyof KreamTarget>>,
+  Assert<KreamTaskTarget extends KreamTarget ? true : false>,
+  Assert<keyof KreamTimingFields extends keyof KreamConfig ? true : false>,
+  Assert<KreamTimingFields extends Pick<KreamConfig, keyof KreamTimingFields> ? true : false>,
+  Assert<Omit<KreamMonitorFields, "targets"> extends Pick<KreamConfig, Exclude<keyof KreamMonitorFields, "targets">> ? true : false>,
+  Assert<"cookie" | "pg_password" | "discord_webhook_url" | "order_action" | "min_interval_ms" extends keyof KreamConfig ? true : false>,
+  Assert<"enabled" | "max_buys_per_run" | "stop_after_success" | "payment_method" extends keyof KreamConfig["buy"] ? true : false>,
 ];
