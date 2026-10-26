@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | `desktop/` | 태스크 관리 데스크톱 앱 (Electron · React). 원본들을 태스크마다 따로 띄운다 |
-| `node/` | 앱이 띄우는 **롯데온 원본** (`src/lotte-test`) 과 그것이 빌려 쓰는 공용 조각 |
+| `node/` | 앱이 띄우는 원본들 — **롯데온** (`src/lotte-test`) · **반다이남코** (`src/bnkr-test`) · **슈프림** (`src/supreme`) · **KREAM 브랜드배송** (`src/kream`) 과 그것들이 빌려 쓰는 공용 조각 |
 | `../naver/ts` | 앱이 띄우는 **네이버 원본** — 따로 저장소 [naver-ts](https://github.com/EthanlOLOO/naver-ts) |
 
 앱은 원본을 **폴더 자리로** 찾는다 — `aio/desktop` 옆의 `aio/node`, 그리고 `aio` 옆의 `naver/ts`.
@@ -23,7 +23,7 @@ mkdir naver && git clone https://github.com/EthanlOLOO/naver-ts.git naver/ts
 project/
 ├─ aio/
 │  ├─ desktop/        ← 앱
-│  ├─ node/           ← 롯데온 원본
+│  ├─ node/           ← 원본들 (롯데온 · 반다이남코 · 슈프림 · KREAM)
 │  └─ lotteon_test_config.json   ← 씨앗 설정 (직접 만든다)
 └─ naver/
    ├─ ts/             ← 네이버 원본
@@ -44,10 +44,14 @@ GitHub 파일 한도(100MB)를 넘는다. 대신 `package-lock.json` 이 있어 
 깐다.
 
 ```bash
-cd aio/node && npm install && npm run build      # 롯데온 원본 (앱에서 '원본 빌드' 로도 된다)
+cd aio/node && npm install && npm run build      # 원본들 (앱에서 '원본 빌드' 로도 된다)
 cd ../../naver/ts && npm install                  # 네이버 원본 (tsx 로 바로 돈다)
 cd ../../aio/desktop && npm install && npm start  # 앱
 ```
 
-앱의 프로필(로그인 쿠키)·태스크 목록·설정은 `%APPDATA%/aio-task-manager/` 에 있다 — 이것도 저장소
-밖이다. 새 PC 에서는 앱에서 다시 로그인한다.
+**KREAM 결제 비밀번호 입력 코드(`node/src/kream/pin.ts`)도 저장소에 없다** (`.gitignore`). 원본(`node/`)이 이 파일을
+불러오므로, 새 PC 에서는 원래 PC 의 파일을 같은 자리에 넣어야 `npm run build` 가 된다.
+
+앱의 프로필(로그인 쿠키·암호화한 결제 비밀번호·KREAM 자동 로그인 정보)·태스크 목록·설정은 `%APPDATA%/aio-task-manager/`
+에 있다 — 이것도 저장소 밖이다. 암호화한 것은 그 PC 의 그 윈도 계정에서만 풀리므로, 새 PC 에서는 앱에서 다시 로그인하고
+다시 넣는다.
