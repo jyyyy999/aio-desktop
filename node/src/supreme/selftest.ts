@@ -926,6 +926,31 @@ async function dropTests(): Promise<void> {
  * **지금 구매(--keys … --once)** — 크롬은 감시와 나란히 뜨고(LazyBrowser), 걸리면 그 크롬으로 담아 결제까지.
  * 원본 CLI 를 임시 집으로 따로 띄운다.
  */
+/**
+ * 키워드 **지켜보기**도 첫 확인부터 판정한다 — 드랍이 열린 뒤에 켠 태스크가 이미 있는 상품을 "기억만" 하고
+ * 아무것도 안 샀다 (2026-10-24, #accessories +bones +crew). 사지 않는 판(buy.enabled false)으로 발견 줄만 본다.
+ */
+async function keywordWatchFirstScanTests(): Promise<void> {
+  console.log("\n== 키워드 지켜보기는 첫 확인부터 판정한다 ==");
+  const mock = await startMockShop();
+  const home = mkdtempSync(join(tmpdir(), "supreme-kwatch-"));
+  try {
+    writeFileSync(join(home, "supreme_config.json"), JSON.stringify({
+      origin: mock.origin,
+      browser: { headless: true, offscreen: false },
+      buy: { enabled: false },
+      monitor_duration_ms: 30_000,
+    }), "utf-8");
+    const { out } = await runCli(["--keys", "#all +box +logo", "--size", "Large", "--watch"], home, 60_000);
+    const tail = out.trim().split("\n").slice(-5).join(" / ");
+    ok("이미 있는 상품을 첫 확인에서 잡는다", /\[dry-run\]/.test(out), tail);
+    ok("첫 확인을 기억만 하고 넘기지 않는다", !/기억했습니다/.test(out), tail);
+  } finally {
+    await mock.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
 async function onceBuyTests(): Promise<void> {
   console.log("\n== 지금 구매 (크롬은 감시와 나란히) ==");
   // 실제 슈프림 모양: 체크포인트 → 대기열 → 한 화면 체크아웃(결제 버튼은 처음부터, 카드칸은 늦게 · 할인코드 Submit).
@@ -1157,6 +1182,7 @@ async function main(): Promise<void> {
     await checkpointTests();
     await dropTests();
     await onceBuyTests();
+    await keywordWatchFirstScanTests();
   } else console.log("\n(크롬 왕복 시험은 --browser 를 붙이면 돕니다)");
 
   console.log(`\n== 결과: ${passed}개 통과 · ${failures.length}개 실패 ==`);

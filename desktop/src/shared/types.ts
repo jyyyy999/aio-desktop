@@ -7,7 +7,7 @@
  * 어느 원본으로 돌리나. main 과 화면이 사이트 사이의 차이에 대해 아는 것은 이것뿐이다 —
  * 원본을 어떻게 띄우는지는 main/sites/ 의 어댑터가 안다.
  */
-export type SiteId = "lotte" | "naver" | "bnkr" | "supreme";
+export type SiteId = "lotte" | "naver" | "bnkr" | "supreme" | "kream";
 
 /**
  * 태스크를 무엇으로 돌릴지. 원본의 명령줄 옵션에 하나씩 대응한다 (어댑터가 옮긴다).
@@ -187,6 +187,15 @@ export interface Profile {
    * 이 PC 의 이 Windows 계정에서만 풀린다), 화면에는 있는지 없는지만 온다. 태스크를 띄울 때만 풀어 환경변수로 넘긴다.
    */
   hasPaymentPin: boolean;
+  /** 이 사이트가 자동 로그인(이메일·비밀번호)을 받나 (어댑터 session.credentials). */
+  canAutoLogin: boolean;
+  /**
+   * 자동 로그인 정보가 저장돼 있나. 이메일·비밀번호는 프로필 폴더의 login-credentials.enc 에 결제 비밀번호와 같은 방식으로
+   * 암호화돼 있고, 로그인·태스크를 띄울 때만 풀어 환경변수로 넘긴다.
+   */
+  hasLoginCredentials: boolean;
+  /** 저장된 이메일을 가린 것 (et***@gmail.com). 화면에 어느 계정인지 보이려고만 둔다. */
+  loginEmailHint?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -610,6 +619,13 @@ export interface AioApi {
   getSettings(): Promise<Settings>;
   saveSettings(s: Settings): Promise<Settings>;
   sitesInfo(): Promise<SiteInfo[]>;
+  /**
+   * 상품 이름 — "사이트:상품번호" (sites.ts 의 productKey) → 이름. 이름을 안 붙인 태스크의 상품은 main 이 한 번 읽어
+   * 적어 두고, 네이버는 원본 출력에서 줍는다. 표의 상품 칸·이름을 비워 둔 모니터가 상품번호 대신 이것을 보인다
+   * (붙인 이름이 먼저).
+   */
+  productNames(): Promise<Record<string, string>>;
+  onProductNames(cb: (names: Record<string, string>) => void): () => void;
   prepareSite(site: SiteId): Promise<number>;
   listProfiles(): Promise<Profile[]>;
   createProfile(site: SiteId, name: string, memo?: string): Promise<Profile>;
@@ -632,6 +648,9 @@ export interface AioApi {
    */
   setProfilePin(id: string, pin: string): Promise<Profile>;
   clearProfilePin(id: string): Promise<Profile>;
+  /** 자동 로그인 이메일·비밀번호를 암호화해 저장한다 (canAutoLogin 인 사이트만). */
+  setProfileLogin(id: string, email: string, password: string): Promise<Profile>;
+  clearProfileLogin(id: string): Promise<Profile>;
   /** 웹훅으로 시험 메시지를 보낸다. */
   testWebhook(url: string): Promise<{ ok: boolean; message: string }>;
   /** 태스크의 태스크 창을 연다 (이미 열려 있으면 앞으로). 여러 태스크의 창을 같이 열 수 있다. */

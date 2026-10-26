@@ -12,13 +12,15 @@
  *   - --drop 이 없다.
  *   - --dry-run 은 **한 번만 보고 끝난다** (index.ts: `args.once || run.dryRun`). 그래서 모니터(사지 않고 계속
  *     보기)로 돌릴 수 없다 — sites.ts 의 monitors: false.
- *   - 씨앗 설정의 discover(목록 훑기)는 태스크에서 뺀다. 태스크는 상품 하나다.
+ *   - 씨앗 설정의 discover(목록 훑기)는 태스크에서 뺀다. 태스크는 상품 하나다 — **키워드 태스크만 빼고**: 상품 칸에
+ *     검색어나 검색 결과 주소를 적으면 targets 를 비우고 discover 에 그 검색 하나를 적는다 (lookOf). 원본이 처음 훑을 때
+ *     보이던 것은 기준선으로 두고, 그 뒤 새로 올라오거나 품절이 풀린 것을 담는다.
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { BNKR_ACTIONS } from "../../shared/sites.js";
+import { BNKR_ACTIONS, isBnkrGoods, isBnkrKeyword } from "../../shared/sites.js";
 import type { CommonSettings, OrderAction, SiteSettings, TaskDef, TimingDefaults, WebhookInfo } from "../../shared/types.js";
-import { readJson, writeJsonAtomic, type JsonObject, type SiteAdapter } from "./adapter.js";
+import { fetchText, htmlTitle, readJson, writeJsonAtomic, type JsonObject, type Launch, type SiteAdapter } from "./adapter.js";
 import { naver } from "./naver.js";
 
 const CONFIG = "bnkr_test_config.json";
@@ -56,6 +58,38 @@ export function gnoOf(url: string): string {
 
 function targetOf(task: TaskDef): BnkrTaskTarget {
   return { gno: gnoOf(task.url), ea: task.ea || 1, mode: "DIRECT", max_price: task.max_price || 0, label: task.label };
+}
+
+/** 키워드 태스크가 적는 훑을 목록 한 줄. 원본 config.ts 의 DiscoverSpec 칸 — src/legacy/contract.ts 가 본다. */
+export interface BnkrDiscoverEntry {
+  /** 검색어나 목록 주소 — 원본 parseWatch 가 둘 다 읽는다. */
+  url: string;
+  ea: number;
+  mode: "DIRECT";
+  max_price: number;
+}
+
+/**
+ * 키워드 태스크가 씨앗 설정 위에 고쳐 적는 칸.
+ *   discover_interval_seconds 0  목록을 바퀴마다 훑는다 — 원본은 훑은 지 이만큼 지났을 때만 훑는데, 바퀴 사이(확인 간격
+ *                                ± 흔들림)가 이보다 짧으면 한 바퀴씩 건너뛴다. 확인 간격이 곧 훑는 간격이 되게 한다.
+ *   buy_on_restock_only false     원본의 훑기가 "새로 올라왔다 · 품절이 풀렸다" 를 이미 가려 감시에 넣는다. 그런데 넣은
+ *                                상품은 원본 checkTarget 에게 처음 보는 것이라, 켜 두면 "이미 판매 중" 으로 보고 안 담는다.
+ *                                대상(targets)은 비워 두므로 이 칸이 닿는 것은 훑기가 찾아낸 것뿐이다.
+ */
+export interface BnkrKeywordFields {
+  discover_interval_seconds: number;
+  buy_on_restock_only: boolean;
+}
+
+function discoverOf(task: TaskDef): BnkrDiscoverEntry {
+  return { url: task.url.trim(), ea: task.ea || 1, mode: "DIRECT", max_price: task.max_price || 0 };
+}
+
+/** 태스크 홈 설정의 대상 칸 — 상품 하나면 targets, 키워드면 discover. */
+function lookOf(task: TaskDef): { targets: BnkrTaskTarget[]; discover: BnkrDiscoverEntry[] } & Partial<BnkrKeywordFields> {
+  if (!isBnkrKeyword(task.url)) return { targets: [targetOf(task)], discover: [] };
+  return { targets: [], discover: [discoverOf(task)], discover_interval_seconds: 0, buy_on_restock_only: false };
 }
 
 /** 원본 loginInfo 와 같은 물음: authmemberno 가 0 이 아니면 살아 있다. */
@@ -205,6 +239,29 @@ function webhookOf(s: SiteSettings, common: CommonSettings): { url: string; info
   return { url: "", info: { source: "none", tail: "", from: "" } };
 }
 
+/** 태스크 홈에 설정을 쓴 뒤 원본을 띄우는 법. 상품 하나든 키워드든 같다. */
+function launchOf(
+  s: SiteSettings, home: string, args: string[], profileDir: string | null, pin: string, payProfileDir: string | null,
+): Launch {
+  // 프로필이 없으면 쿠키도 없다 (재고만·드라이런). 태스크 홈에는 본판 설정이 없어 원본이 다른 데서
+  // 빌려 오지도 않는다 — 다른 계정의 쿠키가 새어 들 길이 없다.
+  const cookie = profileDir ? cookieIn(profileDir) : "";
+  return {
+    entry: entryOf(s),
+    tsxFrom: null,
+    args,
+    // AIO_TTY: 원본은 기다리는 동안 "지켜보는 중 · 1개 · 다음 확인 3초" 를 제자리에서 고쳐 쓰는데, 화면(TTY)일
+    // 때만 찍는다 (../ui.ts — 롯데와 같은 화면 모듈). 워커가 표준출력을 화면처럼 보이게 해서 그 줄을 받는다.
+    // BNKR_NAVER_SESSION: 결제 로그인 프로필(네이버)의 세션 파일. 원본이 크롬에 네이버 쿠키를 같이 심어 네이버페이 창이
+    // 로그인된 채로 열린다. 원본은 읽기만 한다. 없으면 빈 값 — 씨앗 설정의 콘솔용 경로도 태스크 설정에서 비웠다.
+    env: {
+      BNKR_HOME: home, BNKR_COOKIE: cookie, BNKR_PG_PASSWORD: pin, AIO_TTY: "1",
+      BNKR_NAVER_SESSION: payProfileDir ? naver.session.store(payProfileDir) : "",
+    },
+    redirects: [],
+  };
+}
+
 /** 원본 --dry-run 은 한 번 보고 끝난다. 모니터는 sites.ts 에서 막지만, 여기까지 오면 까닭을 말하고 거절한다. */
 const NO_MONITOR = "반다이남코 원본의 --dry-run 은 한 번만 보고 끝나서 모니터로 돌릴 수 없습니다.";
 
@@ -249,18 +306,26 @@ export const bnkr: SiteAdapter = {
   webhookUrl: (s, common) => webhookOf(s, common).url,
 
   launch(task: TaskDef, home, s, common, profileDir, pin, payProfileDir) {
-    // 씨앗 설정을 그대로 베끼되 **대상만 이 태스크의 상품 하나로** 바꾸고 목록 훑기(discover)는 뺀다.
-    // 쿠키·비밀번호는 비워 둔다 (환경변수로 간다). 담은 기록은 건드리지 않는다.
+    // 씨앗 설정을 그대로 베끼되 **대상만 이 태스크의 것으로** 바꾼다 — 상품 하나면 targets 에 그것만 (목록 훑기는 뺀다),
+    // 키워드면 targets 를 비우고 discover 에 그 검색 하나만 (lookOf). 쿠키·비밀번호는 비워 둔다 (환경변수로 간다).
+    // 담은 기록은 건드리지 않는다 — 키워드의 기준선(처음 훑을 때 보이던 것)도 거기 남는다.
     mkdirSync(home, { recursive: true });
     const target = targetOf(task);
     const webhook = webhookOf(s, common).url;
     const cfg = {
-      ...readJson(s.seed), ...timingFields(task), cookie: "", pg_password: "", naver_session: "", targets: [target], discover: [],
+      ...readJson(s.seed), ...timingFields(task), cookie: "", pg_password: "", naver_session: "", ...lookOf(task),
       ...(webhook ? { discord_webhook_url: webhook } : {}),
     };
     writeFileSync(join(home, CONFIG), JSON.stringify(cfg, null, 2), "utf-8");
 
     const args: string[] = [];
+    if (isBnkrKeyword(task.url)) {
+      // 지켜보기: 원본이 목록을 훑어 새로 올라오거나 품절이 풀린 것을 담는다. 재고만: 원본 --find 로 검색 결과를 한 번 보인다
+      // (상품번호·이름·품절 여부·값 — 로그인 없이). 나머지 모드는 sites.ts 의 modesOf 가 막는다.
+      if (task.mode === "status") args.push("--find", task.url.trim());
+      else if (task.action) args.push("--action", task.action);
+      return launchOf(s, home, args, profileDir, pin, payProfileDir);
+    }
     switch (task.mode) {
       case "once": args.push("--once"); break;
       case "dry-run": args.push("--dry-run"); break;
@@ -270,24 +335,7 @@ export const bnkr: SiteAdapter = {
       case "watch": case "drop": break; // drop 은 이 사이트에 없다 (sites.ts 의 modes)
     }
     if (task.action) args.push("--action", task.action);
-
-    // 프로필이 없으면 쿠키도 없다 (재고만·드라이런). 태스크 홈에는 본판 설정이 없어 원본이 다른 데서
-    // 빌려 오지도 않는다 — 다른 계정의 쿠키가 새어 들 길이 없다.
-    const cookie = profileDir ? cookieIn(profileDir) : "";
-    return {
-      entry: entryOf(s),
-      tsxFrom: null,
-      args,
-      // AIO_TTY: 원본은 기다리는 동안 "지켜보는 중 · 1개 · 다음 확인 3초" 를 제자리에서 고쳐 쓰는데, 화면(TTY)일
-      // 때만 찍는다 (../ui.ts — 롯데와 같은 화면 모듈). 워커가 표준출력을 화면처럼 보이게 해서 그 줄을 받는다.
-      // BNKR_NAVER_SESSION: 결제 로그인 프로필(네이버)의 세션 파일. 원본이 크롬에 네이버 쿠키를 같이 심어 네이버페이 창이
-      // 로그인된 채로 열린다. 원본은 읽기만 한다. 없으면 빈 값 — 씨앗 설정의 콘솔용 경로도 태스크 설정에서 비웠다.
-      env: {
-        BNKR_HOME: home, BNKR_COOKIE: cookie, BNKR_PG_PASSWORD: pin, AIO_TTY: "1",
-        BNKR_NAVER_SESSION: payProfileDir ? naver.session.store(payProfileDir) : "",
-      },
-      redirects: [],
-    };
+    return launchOf(s, home, args, profileDir, pin, payProfileDir);
   },
 
   resetState(home) {
@@ -310,6 +358,12 @@ export const bnkr: SiteAdapter = {
     const path = join(home, CONFIG);
     const cfg = readJson(path);
     if (!cfg) throw new Error(`태스크 설정을 읽지 못했습니다: ${path}`);
+    // 키워드는 바로 못 고친다 — 원본은 바뀐 설정에 대상(targets)이 없으면 쓰던 설정을 그대로 지킨다 (reloadConfig).
+    // 키워드에서 상품으로 바꿀 때도 다시 띄운다 — 대상만 고치면 키워드용 칸(buy_on_restock_only false)이 남는다.
+    // 던지면 매니저가 다시 시작한다.
+    if (isBnkrKeyword(task.url) || (Array.isArray(cfg["discover"]) && cfg["discover"].length)) {
+      throw new Error("키워드 태스크는 원본이 바뀐 목록을 다시 읽지 않습니다");
+    }
     writeJsonAtomic(path, { ...cfg, targets: [targetOf(task)] });
   },
 
@@ -317,6 +371,14 @@ export const bnkr: SiteAdapter = {
   busy: { start: /재고 [\d,]+개, 담습니다|담긴 것으로 .+ 다시 시도합니다/, settledBy: STATE },
 
   // 원본 watch.ts · cart.ts · landing.ts 의 말들.
+  // 상품 페이지의 숨은 값 goodsName (원본 site.ts 가 담을 때 쓰는 것). 없으면 og:title.
+  // 키워드 태스크는 상품이 아니라 읽지 않는다.
+  productName: async (url) => {
+    if (!isBnkrGoods(url)) return null;
+    const html = await fetchText(`${SITE}/goods/detail.do?gno=${encodeURIComponent(gnoOf(url))}`);
+    const hidden = /name=["']goodsName["'][^>]*value=["']([^"']*)["']/i.exec(html)?.[1]?.trim();
+    return hidden || htmlTitle(html);
+  },
   progress: {
     countdown: /다음 확인 (\d+)초/,
     buying: /재고 [\d,]+개, 담습니다|담기 성공 \(|담긴 것으로 .+ 다시 시도합니다/,

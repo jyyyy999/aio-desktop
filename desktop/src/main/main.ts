@@ -19,7 +19,9 @@ import { isDiscordWebhook, sendFound, sendTest } from "./webhook.js";
 import { ADAPTERS } from "./sites/index.js";
 import { QueueWatch } from "./queueWatch.js";
 import { ReleaseStore } from "./releaseStore.js";
+import { ProductNames } from "./productNames.js";
 import { isHttpUrl } from "../shared/releases.js";
+import { monitorShownName, monitorUnnamed } from "../shared/monitors.js";
 import { TaskManager } from "./taskManager.js";
 
 /** 앱이 aio/desktop 에 있으니 롯데 원본은 옆집 aio/node, 네이버 원본은 ../naver/ts 에 있다. */
@@ -64,8 +66,16 @@ let monitors: MonitorManager;
 let queueWatch: QueueWatch | undefined;
 /** 발매정보 — 수동 항목은 releases.json, 자동 항목은 태스크(드랍 시각·열리는 시각)에서 만든다. */
 let releases: ReleaseStore;
+/** 상품 이름 — 표의 상품 칸이 상품번호 대신 이름을 보이게 (이름을 안 붙인 태스크). */
+let productNames: ProductNames;
 
-const releaseList = () => releases.list(manager.list(), manager.runtimes());
+const releaseList = () => releases.list(manager.list(), manager.runtimes(), productNames.all());
+/** 이름을 안 붙인 태스크·모니터의 상품 이름을 읽으러 줄 세운다 (이미 아는 것은 건너뛴다). */
+const wantNames = () =>
+  productNames.want([
+    ...manager.list().filter((t) => !t.label.trim()).map((t) => ({ site: t.site, url: t.url })),
+    ...monitors.list().filter((e) => monitorUnnamed(e.def)).map((e) => ({ site: e.def.site, url: e.def.productUrl })),
+  ]);
 /** 자동 항목이 태스크를 따라 바뀌므로 태스크·예약·열리는 시각이 바뀌어도 보낸다. */
 const pushReleases = () => win?.webContents.send("release:changed", releaseList());
 
@@ -509,6 +519,7 @@ function registerIpc(): void {
     return merged;
   });
   ipcMain.handle("aio:sitesInfo", () => m().sitesInfo());
+  ipcMain.handle("aio:productNames", () => productNames.all());
   ipcMain.handle("aio:prepareSite", (_e, site: SiteId) => m().prepareSite(site));
   ipcMain.handle("aio:listProfiles", () => sessions.list());
   ipcMain.handle("aio:createProfile", (_e, site: SiteId, name: string, memo?: string) =>
@@ -542,6 +553,9 @@ function registerIpc(): void {
   // 프로필의 결제 비밀번호. 값은 화면 → 여기 → 암호화해서 파일로만 간다. 돌려주는 것은 Profile (있나 없나만).
   ipcMain.handle("aio:setProfilePin", (_e, id: string, pin: string) => sessions.setPaymentPin(id, String(pin ?? "")));
   ipcMain.handle("aio:clearProfilePin", (_e, id: string) => sessions.clearPaymentPin(id));
+  ipcMain.handle("aio:setProfileLogin", (_e, id: string, email: string, password: string) =>
+    sessions.setLoginCredentials(id, String(email ?? ""), String(password ?? "")));
+  ipcMain.handle("aio:clearProfileLogin", (_e, id: string) => sessions.clearLoginCredentials(id));
   ipcMain.handle("aio:testWebhook", (_e, url: string) =>
     isDiscordWebhook(url)
       ? sendTest(url)
@@ -557,8 +571,16 @@ function registerIpc(): void {
     return e;
   };
   ipcMain.handle("monitor:list", () => monitors.list());
-  ipcMain.handle("monitor:create", (_e, data: MonitorInput) => monitors.create(data));
-  ipcMain.handle("monitor:update", (_e, id: string, data: MonitorInput) => monitors.update(id, data));
+  ipcMain.handle("monitor:create", (_e, data: MonitorInput) => {
+    const entry = monitors.create(data);
+    wantNames();
+    return entry;
+  });
+  ipcMain.handle("monitor:update", (_e, id: string, data: MonitorInput) => {
+    const entry = monitors.update(id, data);
+    wantNames();
+    return entry;
+  });
   ipcMain.handle("monitor:delete", async (_e, id: string) => {
     await monitors.remove(id);
     return monitors.list();
@@ -611,6 +633,7 @@ app.whenReady().then(() => {
     loadSettings(),
     (id) => sessions.ref(id),
     (profileId) => sessions.paymentPin(profileId),
+    (profileId) => sessions.loginCredentials(profileId),
     // 네이버 요청률 합·한 프로필에 하나 — 도는 모니터도 같이 센다.
     () => monitors.liveUses(),
   );
@@ -626,6 +649,20 @@ app.whenReady().then(() => {
     }
   });
   manager.on("log", queueLog);
+  productNames = new ProductNames(app.getPath("userData"));
+  // 메인 창·태스크 창 둘 다 상품 칸에 이름을 보인다. 발매정보의 자동 항목 이름도 따라간다.
+  productNames.on("changed", (names: Record<string, string>) => {
+    win?.webContents.send("aio:productNamesChanged", names);
+    for (const id of taskWatches.keys()) toTaskWatch(id, "aio:productNamesChanged", names);
+    for (const id of monitorPopups.keys()) toMonitorPopup(id, "aio:productNamesChanged", names);
+    pushReleases();
+  });
+  // 원본이 상품 이름을 찍는 사이트(네이버)는 출력에서 줍는다.
+  manager.on("log", (l: LogLine) => {
+    if (l.stream !== "out") return;
+    const task = manager.list().find((t) => t.id === l.taskId);
+    if (task && ADAPTERS[task.site].productNameLine) productNames.noteLine(task.site, task.url, l.text);
+  });
   // 열리기 전 대기열 보기 — 그 태스크의 태스크 창에만 보낸다 (켠 것도 그 창이다).
   queueWatch = new QueueWatch((id) => manager.list().find((t) => t.id === id));
   queueWatch.on("peek", (p: QueuePeek) => {
@@ -636,6 +673,7 @@ app.whenReady().then(() => {
   manager.on("tasks", (tasks: TaskDef[]) => {
     win?.webContents.send("aio:tasks", tasks);
     pushReleases();
+    wantNames();
     for (const id of [...taskWatches.keys()]) {
       // 지운 태스크의 태스크 창은 닫는다. 남은 것에는 바뀐 설정을 보낸다.
       if (tasks.some((t) => t.id === id)) toTaskWatch(id, "aio:tasks", tasks);
@@ -670,7 +708,16 @@ app.whenReady().then(() => {
     toMonitorPopup(e.def.id, "monitor:update", e);
   });
   monitors.on("log", queueMonitorLog);
-  monitors.on("found", (found: MonitorFound) => {
+  // 네이버 모니터도 원본이 확인마다 상품 이름을 찍는다.
+  monitors.on("log", (l: LogLine) => {
+    if (l.stream !== "out") return;
+    const def = monitors.list().find((e) => e.def.id === l.taskId)?.def;
+    if (def && ADAPTERS[def.site].productNameLine) productNames.noteLine(def.site, def.productUrl, l.text);
+  });
+  monitors.on("found", (raw: MonitorFound) => {
+    // 이름을 비워 둔 모니터는 알림·디스코드에도 상품번호 대신 읽어 둔 이름을.
+    const def = monitors.list().find((e) => e.def.id === raw.monitorId)?.def;
+    const found = def ? { ...raw, name: monitorShownName(def, productNames.all()) } : raw;
     win?.webContents.send("monitor:found", found);
     toMonitorPopup(found.monitorId, "monitor:found", found);
     // 앱이 뒤에 있으면 작업 표시줄에서 깜빡인다 (앞으로 오면 멈춘다).
@@ -689,6 +736,7 @@ app.whenReady().then(() => {
   });
   registerIpc();
   createWindow();
+  wantNames();
   // 켤 때 한 번, 저장된 로그인이 살아 있는지 원본에 묻는다 (로그인 정보가 있는 프로필마다 요청 하나, 하나씩).
   void sessions.checkAll();
 });

@@ -16,6 +16,9 @@ import { hint, looksLike, QueueWait } from "./queue.js";
 
 export class SiteError extends Error {}
 
+/** 넘겨주기를 이만큼까지 따라간다 (fetch 의 기본값과 같다). */
+const MAX_HOPS = 20;
+
 export class Session {
   private jar = new Map<string, string>();
   /** 대기열을 볼지 말지. 조회 함수마다 설정을 실어 나르는 것보다 세션이 지고 다니는 편이 낫다. */
@@ -55,7 +58,10 @@ export class Session {
     return this.jar.get(name);
   }
 
-  /** 사이트가 내려준 쿠키를 받아 넣는다. 이름이 같으면 새것이 이긴다. */
+  /**
+   * 사이트가 내려준 쿠키를 받아 넣는다. 이름이 같으면 새것이 이긴다. 빈 값(`MEMBER_TOKEN=` · `remember-me=""`)은
+   * 지우라는 뜻이다 — 브라우저처럼 항아리에서 뺀다. 안 빼면 끊긴 로그인 쿠키를 계속 보내 같은 곳으로 끝없이 돌려보내진다.
+   */
   private absorb(res: Response): void {
     for (const line of res.headers.getSetCookie()) {
       const pair = line.split(";", 1)[0] ?? "";
@@ -63,7 +69,9 @@ export class Session {
       if (at <= 0) continue;
       const name = pair.slice(0, at).trim();
       const value = pair.slice(at + 1).trim();
-      if (name && value) this.jar.set(name, value);
+      if (!name) continue;
+      if (value && value !== '""') this.jar.set(name, value);
+      else this.jar.delete(name);
     }
   }
 
@@ -80,24 +88,37 @@ export class Session {
       Referer: "https://www.bnkrmall.co.kr/",
       ...(init.headers as Record<string, string> | undefined),
     };
-    if (this.jar.size) headers["Cookie"] = this.cookie;
-
     let body = init.body;
+    let method = init.method;
     if (init.form) {
       headers["Content-Type"] = "application/x-www-form-urlencoded; charset=UTF-8";
       headers["X-Requested-With"] = "XMLHttpRequest";
       body = new URLSearchParams(init.form).toString();
     }
 
-    const res = await fetch(url, {
-      ...init,
-      headers,
-      body,
-      redirect: "follow",
-      signal: AbortSignal.timeout((init.timeout ?? 30) * 1000),
-    });
-    this.absorb(res);
-    return res;
+    // **넘겨주기(리다이렉트)는 손으로 따라간다.** fetch 가 따라가게 두면 사이에 내려온 쿠키를 못 받고 처음 쿠키를 그대로
+    // 다시 보낸다. 로그인이 끊기면 사이트는 로그인 쿠키를 지우면서 메인으로 넘기는데, 지운 것을 못 받으니 같은 넘기기가
+    // 끝없이 돌다 "fetch failed" (redirect count exceeded) 로만 터졌다 (2026-10-23 드랍 직전). 브라우저처럼 매번 받아 넣는다.
+    const signal = AbortSignal.timeout((init.timeout ?? 30) * 1000);
+    let at = url;
+    for (let hop = 0; ; hop++) {
+      if (this.jar.size) headers["Cookie"] = this.cookie;
+      else delete headers["Cookie"];
+      const res = await fetch(at, { ...init, method, headers, body, redirect: "manual", signal });
+      this.absorb(res);
+      const next = res.headers.get("location");
+      if (res.status < 300 || res.status >= 400 || !next) return res;
+      if (hop >= MAX_HOPS) {
+        throw new SiteError(`넘겨주기가 ${MAX_HOPS}번 넘게 이어집니다 (${at}) — 로그인 세션이 끊겼을 수 있습니다`);
+      }
+      at = new URL(next, at).toString();
+      // 301·302·303 은 GET 으로 바꿔 따라간다 (브라우저와 같다). 307·308 은 그대로.
+      if (res.status !== 307 && res.status !== 308) {
+        method = "GET";
+        body = undefined;
+        delete headers["Content-Type"];
+      }
+    }
   }
 
   /**

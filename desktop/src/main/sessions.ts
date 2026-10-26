@@ -46,9 +46,19 @@ export interface PinVault {
 
 /** 프로필 폴더의 결제 비밀번호 (암호화된 바이트). 있으면 Profile.hasPaymentPin. */
 const PIN_FILE = "payment-pin.enc";
+/** 프로필 폴더의 자동 로그인 이메일·비밀번호 (암호화된 JSON). 있으면 Profile.hasLoginCredentials. */
+const CRED_FILE = "login-credentials.enc";
+/** 저절로 다시 로그인하는 사이 간격 — 실패한 로그인을 되풀이하지 않게. */
+const AUTO_RELOGIN_GAP_MS = 30 * 60_000;
+
+/** et***@gmail.com — 어느 계정인지만 보이게. */
+function maskEmail(email: string): string {
+  const [user = "", domain = ""] = email.split("@");
+  return `${user.slice(0, 2)}${"*".repeat(Math.max(1, user.length - 2))}${domain ? `@${domain}` : ""}`;
+}
 
 /** meta.json 에 적는 것. 화면에 가는 Profile 은 여기에 어댑터가 아는 것(파일 위치·확인 방법)을 붙인 것이다. */
-type Meta = Pick<Profile, "id" | "site" | "name" | "memo" | "loginStatus" | "statusNote" | "lastLoginAt" | "lastCheckedAt" | "isActive" | "createdAt" | "updatedAt">;
+type Meta = Pick<Profile, "id" | "site" | "name" | "memo" | "loginStatus" | "statusNote" | "lastLoginAt" | "lastCheckedAt" | "isActive" | "createdAt" | "updatedAt" | "loginEmailHint">;
 
 /** 메모는 한 줄로, 이만큼까지. */
 const MEMO_MAX = 100;
@@ -68,6 +78,8 @@ export interface ProfileRef {
   hasLogin: boolean;
   /** 결제 비밀번호가 저장돼 있나. 값은 SessionManager.paymentPin 으로 띄우기 직전에만 푼다. */
   hasPaymentPin: boolean;
+  /** 자동 로그인 정보가 저장돼 있나. 값은 SessionManager.loginCredentials 로 띄우기 직전에만 푼다. */
+  hasLoginCredentials: boolean;
 }
 
 /** 원본 명령을 멈추라고 한 뒤 이만큼 기다려도 안 끝나면 죽인다. */
@@ -299,6 +311,8 @@ export class SessionManager extends EventEmitter {
       cookiesPath: a.store(dir),
       sessionCheck: a.check,
       hasPaymentPin: existsSync(join(dir, PIN_FILE)),
+      canAutoLogin: !!a.credentials,
+      hasLoginCredentials: !!a.credentials && existsSync(join(dir, CRED_FILE)),
     };
   }
 
@@ -317,6 +331,7 @@ export class SessionManager extends EventEmitter {
     return {
       id, name: m.name, site: m.site, dir, loginStatus: this.view(m).loginStatus, hasLogin: ADAPTERS[m.site].session.has(dir),
       hasPaymentPin: existsSync(join(dir, PIN_FILE)),
+      hasLoginCredentials: !!ADAPTERS[m.site].session.credentials && existsSync(join(dir, CRED_FILE)),
     };
   }
 
@@ -461,6 +476,78 @@ export class SessionManager extends EventEmitter {
     }
   }
 
+  // ── 자동 로그인 정보 ────────────────────────────────────────────────────
+  // 결제 비밀번호와 같은 방식이다 — 암호화해 프로필 폴더에만 두고, 로그인·태스크를 띄우기 직전에만 푼다. 값은 로그·화면·JSON
+  // 어디에도 내지 않는다 (가린 이메일만 meta 에 둔다). 로그아웃해도 남는다. 프로필을 지우면 폴더째 지워진다.
+
+  private credPath(id: string): string {
+    return join(this.dirOf(id), CRED_FILE);
+  }
+
+  setLoginCredentials(id: string, email: string, password: string): Profile {
+    const m = this.metaOf(id);
+    if (!ADAPTERS[m.site].session.credentials) throw new Error(`${SITES[m.site].name} 은 자동 로그인을 받지 않습니다.`);
+    const mail = email.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail)) throw new Error("이메일 모양이 아닙니다.");
+    if (!password) throw new Error("비밀번호가 비어 있습니다.");
+    if (!this.vault.available()) {
+      throw new Error("이 PC 에서는 암호화 저장을 쓸 수 없어 저장하지 않습니다 (평문으로는 적지 않습니다).");
+    }
+    const path = this.credPath(id);
+    mkdirSync(this.dirOf(id), { recursive: true });
+    writeFileSync(`${path}.tmp`, this.vault.seal(JSON.stringify({ email: mail, password })));
+    renameSync(`${path}.tmp`, path);
+    this.log(loginLog(id), "sys", `자동 로그인 정보를 암호화해 저장했습니다 (${maskEmail(mail)}). 돌고 있는 태스크는 다시 시작할 때부터 씁니다.`);
+    this.set(id, { loginEmailHint: maskEmail(mail) });
+    return this.get(id);
+  }
+
+  clearLoginCredentials(id: string): Profile {
+    this.metaOf(id);
+    rmSync(this.credPath(id), { force: true });
+    this.log(loginLog(id), "sys", "자동 로그인 정보를 지웠습니다 — 로그인이 풀리면 사람이 다시 로그인해야 합니다.");
+    this.set(id, { loginEmailHint: undefined });
+    return this.get(id);
+  }
+
+  /**
+   * 띄우기 직전에만 부른다 (로그인 명령 · TaskManager). 없으면 null. 풀지 못하면 던진다 — 다른 윈도 계정·다른 PC 에서
+   * 옮겨 온 파일이면 DPAPI 가 풀지 못한다.
+   */
+  loginCredentials(id: string): { email: string; password: string } | null {
+    const m = this.metas.find((one) => one.id === id);
+    if (!m || !ADAPTERS[m.site].session.credentials) return null;
+    let sealed: Buffer;
+    try {
+      sealed = readFileSync(this.credPath(id));
+    } catch {
+      return null;
+    }
+    if (!this.vault.available()) throw new Error("이 PC 에서는 암호화를 쓸 수 없어 자동 로그인 정보를 풀지 못했습니다.");
+    try {
+      const value = JSON.parse(this.vault.open(sealed)) as { email?: unknown; password?: unknown };
+      const email = String(value.email ?? "");
+      const password = String(value.password ?? "");
+      return email && password ? { email, password } : null;
+    } catch {
+      throw new Error("자동 로그인 정보를 풀지 못했습니다 (다른 윈도 계정이나 PC 에서 저장한 것일 수 있습니다) — 프로필 화면에서 다시 넣으세요.");
+    }
+  }
+
+  /** 원본에 넘길 환경변수 (어댑터 session.credentials 의 이름으로). 없거나 못 풀면 {} — 그때는 사람이 로그인한다. */
+  credentialsEnv(id: string): Record<string, string> {
+    const m = this.metas.find((one) => one.id === id);
+    const names = m ? ADAPTERS[m.site].session.credentials : undefined;
+    if (!names) return {};
+    try {
+      const creds = this.loginCredentials(id);
+      return creds ? { [names.emailEnv]: creds.email, [names.passwordEnv]: creds.password } : {};
+    } catch (e) {
+      this.log(loginLog(id), "sys", (e as Error).message);
+      return {};
+    }
+  }
+
   // ── 원본 명령 ───────────────────────────────────────────────────────────
 
   /** 원본 명령 하나를 워커로 돌린다. 출력은 logId 의 로그에 쌓는다. */
@@ -510,14 +597,31 @@ export class SessionManager extends EventEmitter {
     if (this.running.has(id)) return this.get(id);
     if (!a.has(dir)) {
       this.set(id, { loginStatus: "logged_out", statusNote: "저장된 로그인 정보가 없습니다", lastCheckedAt: now() });
-      return this.get(id);
+      return this.autoRelogin(id) ? this.login(id) : this.get(id);
     }
     this.log(loginLog(id), "sys", "로그인이 살아 있는지 원본에 묻습니다 (--whoami)");
     const launch = a.whoami(this.settingsOf(m.site), dir, this.scratchOf(m.site));
     const { code, output } = await this.run(loginLog(id), m.site, launch).done;
     const verdict = a.judge(code, output);
     this.set(id, { loginStatus: verdict.status, statusNote: verdict.note, lastCheckedAt: now() });
+    if ((verdict.status === "expired" || verdict.status === "logged_out") && this.autoRelogin(id)) return this.login(id);
     return this.metas.some((one) => one.id === id) ? this.get(id) : this.view(m);
+  }
+
+  /** 프로필마다 마지막으로 저절로 다시 로그인해 본 때. */
+  private autoTried = new Map<string, number>();
+
+  /**
+   * 로그인이 풀린 것을 봤을 때 저절로 다시 로그인할까 — 자동 로그인 정보가 있고, 30분 안에 해 본 적이 없을 때만.
+   * (다시 로그인한 뒤 확인에서 또 풀려 있으면 그대로 둔다 — 비밀번호가 바뀌었거나 사람이 할 일이 있는 것이다.)
+   */
+  private autoRelogin(id: string): boolean {
+    const m = this.metas.find((one) => one.id === id);
+    if (!m || !ADAPTERS[m.site].session.credentials || !existsSync(this.credPath(id))) return false;
+    if (Date.now() - (this.autoTried.get(id) ?? 0) < AUTO_RELOGIN_GAP_MS) return false;
+    this.autoTried.set(id, Date.now());
+    this.log(loginLog(id), "sys", "로그인이 풀려 있습니다 — 저장된 이메일로 저절로 다시 로그인합니다.");
+    return true;
   }
 
   /** 로그인 정보가 있는 프로필만 확인한다 (앱을 켤 때). 하나씩 — 같은 순간에 두드리지 않는다. */
@@ -550,7 +654,10 @@ export class SessionManager extends EventEmitter {
     try {
       if (a.login.kind === "legacy") {
         note("원본의 로그인 명령을 띄웁니다 (--login) — 열린 창에서 직접 로그인하세요.");
-        const run = this.run(logId, m.site, a.login.launch(s, dir));
+        const launch = a.login.launch(s, dir);
+        const creds = this.credentialsEnv(id);
+        if (creds) note("저장된 이메일로 자동 로그인합니다 — 캡차·인증이 뜨면 창이 열립니다.");
+        const run = this.run(logId, m.site, { ...launch, env: { ...launch.env, ...creds } });
         this.running.set(id, () => this.stopChild(run.child));
         const { code } = await run.done;
         saved = code === 0;

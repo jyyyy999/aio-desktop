@@ -4,7 +4,7 @@
  */
 import { useState, type ReactNode } from "react";
 import {
-  MONITOR_MIN_INTERVAL_MS, MONITOR_RUNNING, MONITOR_STATUS_LABEL, monitorIntervalWarning, monitorProblem, ON_FOUND_LABEL,
+  MONITOR_MIN_INTERVAL_MS, MONITOR_RUNNING, MONITOR_STATUS_LABEL, monitorIntervalWarning, monitorProblem, monitorShownName, ON_FOUND_LABEL,
 } from "../shared/monitors";
 import { SITE_IDS, SITES, siteOfUrl } from "../shared/sites";
 import type { MonitorEntry, MonitorFound, MonitorInput, MonitorStatus, Profile, SiteId, SiteInfo } from "../shared/types";
@@ -37,11 +37,11 @@ export function agoOf(iso: string | undefined, now: number): string {
  * 모니터를 지금 구매 태스크로 넘긴다. 사람이 눌렀을 때만 — 한 번 더 묻는다 (오작동 방지).
  * → 만든 태스크 id (그만뒀거나 실패하면 null. 실패는 aio.tell 로 알린다)
  */
-export async function switchMonitor(entry: MonitorEntry, profiles: Profile[]): Promise<string | null> {
+export async function switchMonitor(entry: MonitorEntry, profiles: Profile[], name = entry.def.name): Promise<string | null> {
   const { def } = entry;
   const profile = profiles.find((p) => p.id === def.profileId);
   const who = profile ? `'${profile.name}' 프로필` : "고른 프로필";
-  if (!(await aio.ask(`'${def.name}' 을(를) 지금 구매 태스크로 전환할까요?\n모니터는 멈추고, ${who}로 바로 구매를 시작합니다.`))) return null;
+  if (!(await aio.ask(`'${name}' 을(를) 지금 구매 태스크로 전환할까요?\n모니터는 멈추고, ${who}로 바로 구매를 시작합니다.`))) return null;
   try {
     return (await aio.monitor.switchToTask(def.id)).taskId;
   } catch (e) {
@@ -74,7 +74,7 @@ export function FoundAlerts({ alerts, monitors, profiles, onSwitched, onDismiss 
               <button
                 type="button" className="btn small buy"
                 onClick={async () => {
-                  const taskId = await switchMonitor(entry, profiles);
+                  const taskId = await switchMonitor(entry, profiles, f.name);
                   if (taskId) onSwitched(f.monitorId, taskId);
                 }}
               >
@@ -91,8 +91,10 @@ export function FoundAlerts({ alerts, monitors, profiles, onSwitched, onDismiss 
 
 // ── 모니터 목록 ─────────────────────────────────────────────────────────────
 
-export function MonitorsPage({ monitors, profiles, infos, selected, now, onSelect, onChanged, onUpsert, onSwitched }: {
+export function MonitorsPage({ monitors, profiles, infos, selected, now, productNames, onSelect, onChanged, onUpsert, onSwitched }: {
   monitors: MonitorEntry[]; profiles: Profile[]; infos: SiteInfo[]; selected: string | null; now: number;
+  /** 상품 이름 (productKey → 이름) — 이름을 비워 둔 모니터는 상품번호 대신 이것을. */
+  productNames: Record<string, string>;
   onSelect: (logId: string) => void;
   /** 지웠다 — 새 목록. */
   onChanged: (list: MonitorEntry[]) => void;
@@ -104,7 +106,7 @@ export function MonitorsPage({ monitors, profiles, infos, selected, now, onSelec
   const rest = monitors.filter((m) => !MONITOR_RUNNING.includes(m.state.status));
   const card = (m: MonitorEntry) => (
     <MonitorCard
-      key={m.def.id} entry={m} profiles={profiles} now={now} selected={selected === monitorLog(m.def.id)}
+      key={m.def.id} entry={m} name={monitorShownName(m.def, productNames)} profiles={profiles} now={now} selected={selected === monitorLog(m.def.id)}
       onSelect={() => onSelect(monitorLog(m.def.id))} onEdit={() => setEditing(m)}
       onChanged={onChanged} onUpsert={onUpsert} onSwitched={onSwitched}
     />
@@ -142,8 +144,8 @@ export function MonitorsPage({ monitors, profiles, infos, selected, now, onSelec
   );
 }
 
-function MonitorCard({ entry, profiles, now, selected, onSelect, onEdit, onChanged, onUpsert, onSwitched }: {
-  entry: MonitorEntry; profiles: Profile[]; now: number; selected: boolean;
+function MonitorCard({ entry, name, profiles, now, selected, onSelect, onEdit, onChanged, onUpsert, onSwitched }: {
+  entry: MonitorEntry; name: string; profiles: Profile[]; now: number; selected: boolean;
   onSelect: () => void; onEdit: () => void;
   onChanged: (list: MonitorEntry[]) => void; onUpsert: (e: MonitorEntry) => void; onSwitched: (monitorId: string, taskId: string) => void;
 }) {
@@ -182,7 +184,7 @@ function MonitorCard({ entry, profiles, now, selected, onSelect, onEdit, onChang
       <div className="card-top">
         <span>{MONITOR_DOT[state.status]}</span>
         <SiteTag site={def.site} />
-        <b className="grow">{def.name}</b>
+        <b className="grow" title={name !== def.name ? `상품번호 ${def.name}` : undefined}>{name}</b>
         <span className={`pill mon ${state.status}`}>{MONITOR_STATUS_LABEL[state.status]}</span>
       </div>
       <div className="small">{line}</div>
@@ -197,7 +199,7 @@ function MonitorCard({ entry, profiles, now, selected, onSelect, onEdit, onChang
           <button
             type="button" className="btn small buy" disabled={busy}
             onClick={() => void act(async () => {
-              const taskId = await switchMonitor(entry, profiles);
+              const taskId = await switchMonitor(entry, profiles, name);
               if (taskId) onSwitched(def.id, taskId);
             })}
           >
@@ -226,7 +228,7 @@ function MonitorCard({ entry, profiles, now, selected, onSelect, onEdit, onChang
         <button type="button" className="icon" title={live ? "고치기 — 저장하면 바뀐 설정으로 다시 띄웁니다" : "고치기"} disabled={state.status === "stopping"} onClick={onEdit}>✎</button>
         <button
           type="button" className="icon" title="지우기" disabled={busy}
-          onClick={() => void aio.ask(`'${def.name}' 모니터를 지울까요?${live ? " 돌고 있으면 멈춥니다." : ""} 모니터 폴더와 로그도 지워집니다.`)
+          onClick={() => void aio.ask(`'${name}' 모니터를 지울까요?${live ? " 돌고 있으면 멈춥니다." : ""} 모니터 폴더와 로그도 지워집니다.`)
             .then((ok) => { if (ok) void act(async () => onChanged(await aio.monitor.delete(def.id))); })}
         >
           ✕
@@ -240,7 +242,7 @@ function MonitorCard({ entry, profiles, now, selected, onSelect, onEdit, onChang
 // ── 만들기 · 고치기 폼 ──────────────────────────────────────────────────────
 
 /** 간격을 비워 둘 때 — 롯데는 씨앗 하한(드랍 걸음이 아니게), 네이버는 권장선 안쪽. */
-const DEFAULT_INTERVAL_MS: Record<SiteId, number> = { lotte: 5000, naver: 10000, bnkr: 15000, supreme: 2500 };
+const DEFAULT_INTERVAL_MS: Record<SiteId, number> = { lotte: 5000, naver: 10000, bnkr: 15000, supreme: 2500, kream: 5000 };
 
 function blankInput(site: SiteId, profiles: Profile[]): MonitorInput {
   const mine = profiles.filter((p) => p.site === site && p.isActive);

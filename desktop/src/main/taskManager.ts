@@ -21,7 +21,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { FIELD_LABEL, MODE_LABEL, pinMatters, planDrop, PREPARE_LOG, REPEATING_MODES, SITE_IDS, SITES, TIMING_BLANK } from "../shared/sites.js";
+import { FIELD_LABEL, MODE_LABEL, modesOf, pinMatters, planDrop, PREPARE_LOG, REPEATING_MODES, SITE_IDS, SITES, TIMING_BLANK } from "../shared/sites.js";
 import type {
   CommonSettings, LogLine, MainMessage, Settings, SiteId, SiteInfo, TaskDef, TaskRuntime, WorkerMessage,
 } from "../shared/types.js";
@@ -151,6 +151,8 @@ export class TaskManager extends EventEmitter {
     private readonly profileOf: (id: string) => ProfileRef | null,
     /** 그 프로필의 결제 비밀번호를 푼다 (SessionManager.paymentPin). 띄우기 직전에만 부른다. 없으면 "", 못 풀면 던진다. */
     private readonly pinOf: (profileId: string) => string,
+    /** 그 프로필의 자동 로그인 이메일·비밀번호를 푼다 (SessionManager.loginCredentials). 띄우기 직전에만. 없으면 null, 못 풀면 던진다. */
+    private readonly credsOf: (profileId: string) => { email: string; password: string } | null,
     /** 태스크 밖에서 사이트를 두드리는 것 (도는 모니터). 요청률 합과 "한 프로필에 하나" 에 같이 센다. */
     private readonly outside: () => LiveUse[] = () => [],
   ) {
@@ -378,7 +380,8 @@ export class TaskManager extends EventEmitter {
     if (p.loginStatus === "logging_in") {
       return { profile: null, error: `'${p.name}' 프로필이 로그인 중입니다 — 로그인을 끝내거나 취소한 뒤 다시 시작하세요.` };
     }
-    if (!p.hasLogin && !optional) {
+    // 자동 로그인 정보가 있으면 쿠키가 없어도 띄운다 — 원본이 크롬에서 로그인한다 (KREAM).
+    if (!p.hasLogin && !optional && !p.hasLoginCredentials) {
       return { profile: null, error: `'${p.name}' 프로필에 로그인 정보가 없습니다 — 프로필 화면에서 로그인하세요.` };
     }
     if (spec.oneTaskPerProfile) {
@@ -521,8 +524,10 @@ export class TaskManager extends EventEmitter {
     if (!task) throw new Error(`없는 태스크입니다: ${id}`);
     if (this.isLive(id)) return;
 
-    if (!SITES[task.site].modes.includes(task.mode)) {
-      this.push(id, "sys", `${SITES[task.site].name} 원본에는 '${task.mode}' 모드가 없습니다 — 모드를 바꿔 주세요.`);
+    if (!modesOf(task).includes(task.mode)) {
+      this.push(id, "sys", SITES[task.site].modes.includes(task.mode)
+        ? `${SITES[task.site].name} 키워드 태스크는 '${MODE_LABEL[task.mode]}' 로 돌 수 없습니다 — ${modesOf(task).map((m) => MODE_LABEL[m]).join(" · ")} 중에서 고르세요 (재고만 = 검색 결과 조회).`
+        : `${SITES[task.site].name} 원본에는 '${task.mode}' 모드가 없습니다 — 모드를 바꿔 주세요.`);
       this.update(id, { status: "failed" });
       return;
     }
@@ -575,6 +580,20 @@ export class TaskManager extends EventEmitter {
       this.push(id, "sys", `태스크 폴더를 준비하지 못했습니다: ${(e as Error).message}`);
       this.update(id, { status: "failed" });
       return;
+    }
+
+    // 자동 로그인 (KREAM) — 원본이 로그인이 풀린 것을 보면 이 이메일·비밀번호로 다시 로그인한다. 값은 환경변수로만.
+    const names = adapter.session.credentials;
+    if (names && profile?.hasLoginCredentials) {
+      try {
+        const creds = this.credsOf(profile.id);
+        if (creds) {
+          launch = { ...launch, env: { ...launch.env, [names.emailEnv]: creds.email, [names.passwordEnv]: creds.password } };
+          this.push(id, "sys", `자동 로그인: '${profile.name}' 프로필의 이메일 — 로그인이 풀리면 원본이 다시 로그인합니다`);
+        }
+      } catch (e) {
+        this.push(id, "sys", `${(e as Error).message} 자동 로그인 없이 띄웁니다.`);
+      }
     }
 
     const s = this.slot(id);

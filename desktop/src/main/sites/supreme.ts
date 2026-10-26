@@ -17,7 +17,7 @@ import { join } from "node:path";
 import type { CommonSettings, MonitorDef, SiteInfo, SiteSettings, TaskDef, WebhookInfo } from "../../shared/types.js";
 import { orderForLaunch } from "../supremeOrder.js";
 import {
-  MONITOR_MAX_BUYS, objectAt, readJson, writeJsonAtomic,
+  fetchText, MONITOR_MAX_BUYS, objectAt, readJson, writeJsonAtomic, type JsonObject,
   type Launch, type MonitorSignal, type PrepareCommand, type ProgressSignal, type SessionSpec, type SiteAdapter,
 } from "./adapter.js";
 
@@ -558,6 +558,19 @@ export const supreme: SiteAdapter = {
   } satisfies SessionSpec,
 
   // 원본 watch.ts · checkout.ts 의 줄들 (supreme/lines.ts).
+  // 원본 site.ts 가 상품을 풀 때 쓰는 /products/<handle>.js 의 title. 키워드 태스크는 주소가 아니라 읽지 않는다.
+  productName: async (url) => {
+    const handle = /\/products\/([A-Za-z0-9_-]+)/.exec(url.trim())?.[1];
+    if (!handle) return null;
+    let origin = ORIGIN;
+    try {
+      origin = new URL(url.trim()).origin;
+    } catch {
+      // 주소가 아니면 기본 상점
+    }
+    const raw = JSON.parse(await fetchText(`${origin}/products/${handle}.js`)) as JsonObject;
+    return String(raw["title"] ?? "").trim() || null;
+  },
   progress: {
     // LINES.round — 회차를 여기서 센다
     round: /확인 (\d+)회 · 상품 (\d+)개 · (\d+)초 걸림/,

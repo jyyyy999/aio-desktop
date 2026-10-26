@@ -1,8 +1,8 @@
 /**
  * 모니터의 규칙. 폼(화면)과 main(저장·시작)이 같은 답을 내게 여기 둔다. 타입은 types.ts 에 있다.
  */
-import { SITES } from "./sites.js";
-import type { MonitorInput, MonitorOnFound, MonitorStatus, SiteId, TimingDefaults } from "./types.js";
+import { isNaverSearch, productKey, SITES } from "./sites.js";
+import type { MonitorDef, MonitorInput, MonitorOnFound, MonitorStatus, SiteId, TimingDefaults } from "./types.js";
 
 export const MONITOR_STATUS_LABEL: Record<MonitorStatus, string> = {
   idle: "대기",
@@ -38,7 +38,7 @@ export function monitorIntervalWarning(site: SiteId, ms: number, timing: TimingD
  *          아래는 드랍 걸음(--drop)으로 돈다
  *   네이버 2초 — 상품 하나를 이보다 자주 보면 원본이 요청률 거부선(분당 30회)에 걸려 시작하지 않는다
  */
-export const MONITOR_MIN_INTERVAL_MS: Record<SiteId, number> = { lotte: 500, naver: 2000, bnkr: 3000, supreme: 2500 };
+export const MONITOR_MIN_INTERVAL_MS: Record<SiteId, number> = { lotte: 500, naver: 2000, bnkr: 3000, supreme: 2500, kream: 3000 };
 
 export const ON_FOUND_LABEL: Record<MonitorOnFound, string> = {
   notify: "알림만",
@@ -50,12 +50,27 @@ export function monitorName(input: Pick<MonitorInput, "name" | "site" | "product
   return input.name.trim() || SITES[input.site].productCode(input.productUrl);
 }
 
+/** 이름을 비워 두어 상품번호가 이름이 된 모니터인가. */
+export function monitorUnnamed(def: Pick<MonitorDef, "name" | "site" | "productUrl">): boolean {
+  return def.name === SITES[def.site].productCode(def.productUrl);
+}
+
+/**
+ * 보이는 이름. 상품번호가 이름이 된 모니터는 상품 주소에서 읽어 둔 이름 (main 의 productNames — productKey → 이름).
+ * 적힌 이름(monitors.json)은 그대로 둔다 — 보일 때만 바꾼다.
+ */
+export function monitorShownName(def: Pick<MonitorDef, "name" | "site" | "productUrl">, names: Record<string, string>): string {
+  return (monitorUnnamed(def) && names[productKey(def.site, def.productUrl)]) || def.name;
+}
+
 /** 만들거나 고칠 수 없는 까닭. 괜찮으면 null. */
 export function monitorProblem(m: MonitorInput): string | null {
   const spec = SITES[m.site];
   if (!spec) return `모르는 사이트입니다: ${String(m.site)}`;
   if (!spec.monitors) return `${spec.name}는 모니터를 지원하지 않습니다 — 원본의 드라이런이 한 번만 보고 끝납니다. 태스크로 돌리세요.`;
   if (!spec.isProductUrl(m.productUrl)) return spec.urlError;
+  // 네이버 스토어 검색은 태스크만 — 모니터는 원본 설정의 products 에 상품 하나를 적어 돈다.
+  if (m.site === "naver" && isNaverSearch(m.productUrl)) return "네이버 스토어 검색(키워드)은 모니터로 볼 수 없습니다 — 태스크로 돌리세요.";
   if (!Number.isFinite(m.checkIntervalMs) || m.checkIntervalMs < MONITOR_MIN_INTERVAL_MS[m.site]) {
     return `${spec.name} 모니터는 ${MONITOR_MIN_INTERVAL_MS[m.site] / 1000}초보다 촘촘히 볼 수 없습니다.`;
   }

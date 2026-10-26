@@ -60,6 +60,8 @@ export const BNKR_ACTIONS = ["open", "agree", "submit"] as const;
  * (기본: 결제 버튼까지). 그래서 고를 것이 없다.
  */
 export const SUPREME_ACTIONS = [] as const;
+/** KREAM 브랜드배송 — 주문서까지 / 결제하기까지 (원본 kream/config.ts 의 ACTIONS). */
+export const KREAM_ACTIONS = ["open", "submit"] as const;
 
 export interface SiteSpec {
   id: SiteId;
@@ -134,11 +136,12 @@ export const SITES: Record<SiteId, SiteSpec> = {
     // submit 이 인증 화면에서 멈추는지, 비밀번호 뒤 마지막 확인까지 가는지는 씨앗 설정에 달렸다
     // — 어댑터의 actionHints 가 태스크 폼에 적어 준다.
     actionLabel: { open: "주문서까지", agree: "—", submit: "결제 단계까지" },
-    placeholder: "https://smartstore.naver.com/…/products/123… 또는 brand.naver.com/…",
-    urlError: "스마트스토어·브랜드스토어 상품 주소가 아닙니다.",
+    placeholder: "https://smartstore.naver.com/…/products/123…  또는  스토어 검색 smartstore.naver.com/<스토어>/search?q=키워드",
+    urlError: "스마트스토어·브랜드스토어 상품 주소나 스토어 검색 주소(…/<스토어>/search?q=키워드)가 아닙니다.",
     // 원본 commands.ts 의 urlFrom 과 같은 모양이다. 꼬리(?nl-au=…)는 원본이 떼어 낸다.
-    isProductUrl: (url) => /https?:\/\/(?:brand|smartstore)\.naver\.com\/[^/\s]+\/products\/\d+/.test(url.trim()),
-    productCode: (url) => /products\/(\d+)/.exec(url)?.[1] ?? url.trim(),
+    // **스토어 검색 주소도 받는다** — 아직 번호가 없는 상품을 그 검색 결과에서 기다린다 (isNaverSearch).
+    isProductUrl: (url) => /https?:\/\/(?:brand|smartstore)\.naver\.com\/[^/\s]+\/products\/\d+/.test(url.trim()) || isNaverSearch(url),
+    productCode: (url) => /products\/(\d+)/.exec(url)?.[1] ?? (isNaverSearch(url) ? naverKeywordText(url) : url.trim()),
     liveFields: [],
     modes: ["watch", "once", "buy", "dry-run", "status"],
     loginOptional: [],
@@ -153,11 +156,12 @@ export const SITES: Record<SiteId, SiteSpec> = {
     actions: BNKR_ACTIONS,
     // 네이버페이 테스트 판이다 — submit 은 결제창에서 네이버페이를 고르고, 비밀번호가 있으면 마지막 확인까지 간다.
     actionLabel: { open: "주문서까지", agree: "필수 동의까지", submit: "결제 단계까지" },
-    placeholder: "https://www.bnkrmall.co.kr/goods/detail.do?gno=… 또는 상품번호(gno)",
-    urlError: "반다이남코코리아몰 상품 주소나 상품번호(gno)가 아닙니다.",
+    placeholder: "https://www.bnkrmall.co.kr/goods/detail.do?gno=… · 상품번호(gno) · 키워드 · 검색 결과 주소",
+    urlError: "반다이남코코리아몰 상품 주소·상품번호(gno)·키워드·목록 주소(검색 결과 등)가 아닙니다.",
     // 원본 site.ts 의 parseGno 는 숫자 네 자리 이상이면 받는다. 주소는 bnkrmall 것만.
-    isProductUrl: (url) => /bnkrmall\.co\.kr\/.*[?&]gno=\d{4,}|^\d{4,}$/.test(url.trim()),
-    productCode: (url) => /gno=(\d+)/.exec(url)?.[1] ?? url.trim(),
+    // **키워드도 받는다** — 아직 번호가 없는 상품을 검색 결과에서 기다린다 (isBnkrKeyword).
+    isProductUrl: (url) => isBnkrGoods(url) || isBnkrKeyword(url),
+    productCode: (url) => /gno=(\d+)/.exec(url)?.[1] ?? (isBnkrKeyword(url) ? bnkrKeywordText(url) : url.trim()),
     // 원본은 설정 파일이 바뀌면 바로 다시 읽는다 (watch.ts 의 reloadConfig). 옵션 상품은 원본이 담지 않는다.
     liveFields: ["url", "ea", "max_price", "label"],
     modes: ["watch", "once", "buy", "dry-run", "status"],
@@ -190,9 +194,98 @@ export const SITES: Record<SiteId, SiteSpec> = {
     monitors: true,
     payProfileSite: null,
   },
+  kream: {
+    id: "kream",
+    name: "KREAM",
+    tag: "KREAM",
+    actions: KREAM_ACTIONS,
+    // submit 이 비밀번호까지 가는지는 프로필의 결제 비밀번호에 달렸다 — 어댑터의 actionHints 가 폼에 적어 준다.
+    actionLabel: { open: "주문서까지", agree: "—", submit: "결제하기까지" },
+    placeholder: "https://kream.co.kr/products/1066904  (브랜드배송 상품)",
+    urlError: "KREAM 상품 주소(kream.co.kr/products/번호)나 상품번호가 아닙니다.",
+    isProductUrl: (url) => /(?:^|\/\/)(?:www\.)?kream\.co\.kr\/products\/\d+|^\d{3,}$/.test(url.trim()),
+    productCode: (url) => /\/products\/(\d+)/.exec(url.trim())?.[1] ?? url.trim(),
+    // 원본은 설정을 시작할 때 한 번 읽는다 — 돌던 중에 고치면 다시 시작해야 반영된다.
+    liveFields: [],
+    modes: ["watch", "once", "buy", "dry-run", "status"],
+    // 재고는 로그인 없이 보인다 (상품 페이지를 서버가 그려 보낸다). 사려면 로그인해야 한다.
+    loginOptional: ["status", "dry-run"],
+    // 태스크마다 크롬 프로필이 따로고 쿠키를 심는다. 같은 상품을 둘 돌리면 같은 계정으로 주문서가 두 번 열린다.
+    oneTaskPerProfile: false,
+    monitors: true,
+    payProfileSite: null,
+  },
 };
 
 export const SITE_IDS = Object.keys(SITES) as SiteId[];
+
+/** 반다이남코 상품 하나 — 상품 주소(gno=…)나 상품번호. */
+export function isBnkrGoods(url: string): boolean {
+  return /bnkrmall\.co\.kr\/.*[?&]gno=\d{4,}|^\d{4,}$/.test(url.trim());
+}
+
+/**
+ * 반다이남코 키워드 — 검색어("원피스 카드게임")나 bnkrmall 목록 주소(검색 결과·카테고리, 물음표 뒤 값이 있는 것).
+ * 원본 list.ts 의 parseWatch 가 둘 다 읽는다 (설정의 discover). 원본 인자로 가니 "-" 로 시작하면 안 된다.
+ */
+export function isBnkrKeyword(url: string): boolean {
+  const u = url.trim();
+  if (!u || u.startsWith("-") || u.startsWith("/") || isBnkrGoods(u)) return false;
+  if (/^https?:/i.test(u)) return /^https?:\/\/(?:www\.)?bnkrmall\.co\.kr\/[^?#]+\?[^#]*=[^&#]/.test(u);
+  return true;
+}
+
+/** 표에 보일 키워드 — 검색 결과 주소면 검색어(sword). */
+export function bnkrKeywordText(url: string): string {
+  const u = url.trim();
+  try {
+    return (/^https?:/i.test(u) && new URL(u).searchParams.get("sword")?.trim()) || u;
+  } catch {
+    return u;
+  }
+}
+
+/**
+ * 반다이남코 키워드 태스크의 모드. 원본의 목록 훑기는 지켜보기 루프 안에서만 돈다 — 한 번만·드라이런은 첫 바퀴가
+ * 기준선 잡기라 아무것도 못 사고 끝나고, 지금 구매는 상품번호가 있어야 한다. 재고만은 원본 --find (검색 결과 조회).
+ */
+export const BNKR_KEYWORD_MODES: readonly TaskMode[] = ["watch", "status"];
+
+/**
+ * 네이버 스토어 안 검색 — smartstore.naver.com/<스토어>/search?q=키워드 (브랜드스토어도). 원본 parse.ts 의 isSearch 와
+ * 같은 모양이다. 원본이 그 검색 결과를 훑어 새로 올라오거나 품절이 풀린 상품을 산다 (설정의 searches).
+ */
+export function isNaverSearch(url: string): boolean {
+  return /^https?:\/\/(?:brand|smartstore)\.naver\.com\/[^/?#\s]+\/search\?(?:[^#]*&)?q=[^&#]/.test(url.trim());
+}
+
+/** 표에 보일 키워드 — 검색 주소의 q (스토어 이름을 붙인다). */
+export function naverKeywordText(url: string): string {
+  try {
+    const u = new URL(url.trim());
+    return `${u.searchParams.get("q")?.trim() || url.trim()} @${u.pathname.split("/")[1] ?? ""}`;
+  } catch {
+    return url.trim();
+  }
+}
+
+/**
+ * 네이버 검색 태스크의 모드. 한 번만은 첫 바퀴가 기준선 잡기라 아무것도 못 사고 끝나고, 지금 구매는 상품 주소가 있어야
+ * 한다. 드라이런은 원본이 계속 보며 사지만 않는다(--watch --dry-run). 재고만은 검색 결과를 한 번 보인다.
+ */
+export const NAVER_SEARCH_MODES: readonly TaskMode[] = ["watch", "dry-run", "status"];
+
+/** 키워드(검색)로 상품을 기다리는 태스크인가 — 반다이남코 키워드 · 네이버 스토어 검색. */
+export function isKeywordTask(t: Pick<TaskDef, "site" | "url">): boolean {
+  return (t.site === "bnkr" && isBnkrKeyword(t.url)) || (t.site === "naver" && isNaverSearch(t.url));
+}
+
+/** 이 태스크가 고를 수 있는 모드 — 사이트 것, 키워드 태스크면 그 중 일부. */
+export function modesOf(t: Pick<TaskDef, "site" | "url">): readonly TaskMode[] {
+  if (t.site === "bnkr" && isBnkrKeyword(t.url)) return BNKR_KEYWORD_MODES;
+  if (t.site === "naver" && isNaverSearch(t.url)) return NAVER_SEARCH_MODES;
+  return SITES[t.site].modes;
+}
 
 /** 붙여 넣은 주소가 어느 사이트 것인가. 모르면 null. */
 export function siteOfUrl(url: string): SiteId | null {
@@ -216,7 +309,7 @@ export const FIELD_LABEL: Record<keyof TaskDef, string> = {
   monitorDurationMs: "감시 시간", stopOnSuccess: "사고 나면", maxBuys: "최대 몇 번", dropSettings: "드랍 설정",
 };
 
-/** 결제 비밀번호 자릿수. 두 원본 다 6자리를 기준으로 자판을 누른다 (다르면 경고만 하고 누른다 — 우리는 받지 않는다). */
+/** 결제 비밀번호 자릿수. 간편결제 자판은 6자리를 기준으로 누른다 (사이트 원본이 다르면 경고하거나 누르지 않는다). */
 export const PAYMENT_PIN_DIGITS = 6;
 
 /** 사는 모드 — 구매 자리까지 갈 수 있는 것. 재고만·드라이런은 사지 않는다. */
@@ -236,3 +329,8 @@ export const loginLog = (profileId: string): string => `${LOGIN_LOG_PREFIX}${pro
 
 /** 사이트 공통 명령(간편결제 비밀번호)의 출력이 쌓이는 가짜 태스크 id. */
 export const siteLog = (site: SiteId): string => `__site__:${site}`;
+
+/** 상품 이름을 적어 두는 열쇠 — 사이트와 상품번호 (main/productNames.ts · 표의 상품 칸). */
+export function productKey(site: SiteId, url: string): string {
+  return `${site}:${SITES[site].productCode(url)}`;
+}

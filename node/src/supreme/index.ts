@@ -919,10 +919,12 @@ async function main(): Promise<void> {
     }
     sayStep(`키워드로 삽니다 — ${describeKeywords(spec)}${optionSpec.color || optionSpec.size ? ` · 옵션 ${describeOption(optionSpec)}` : ""}`);
     log.info(`훑을 컬렉션: ${cfg.collections.join(", ")}${spec.collections.length ? " (# 로 좁힘 — 빠릅니다)" : " (전체 — #카테고리 로 좁히면 훨씬 빠릅니다)"}`);
-    // **--once 와 함께면 "지금" 이다.** 첫 확인을 조용히 넘기면(silent_first_scan) 이미 목록에 있는
-    // 상품은 영영 안 잡힌다 — 지금 구매는 첫 바퀴부터 조건에 맞는 것을 담아야 한다 (2026-10-08).
+    // **키워드 태스크는 첫 확인부터 판정한다.** 첫 확인을 조용히 넘기면(silent_first_scan) 이미 목록에 있는
+    // 상품은 영영 안 잡힌다 — 지금 구매(2026-10-08)뿐 아니라 지켜보기도 그렇다: 11:00 드랍이 열린 뒤
+    // 11:00:02 에 켠 #accessories +bones +crew 가 첫 확인에서 23개를 "기억만" 하고 1분 내내 아무것도 안 샀다
+    // (2026-10-24). 키워드로 좁혀 있어 알림이 쏟아질 일도 없다.
+    cfg.silent_first_scan = false;
     if (args.once || args.dryRun) {
-      cfg.silent_first_scan = false;
       sayStep(args.dryRun ? "한 바퀴만 보고 담을 것만 알려 줍니다 (--dry-run)" : "지금 목록에서 조건에 맞는 것을 찾아 담습니다");
       await runOnce(cfg, state, args.dryRun || !cfg.buy.enabled);
       return;
