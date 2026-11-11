@@ -8,7 +8,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { SITE_IDS, SITES, TIMING_BLANK } from "../shared/sites.js";
 import type {
-  LogLine, MonitorEntry, MonitorFound, MonitorInput, Profile, ProfilePatch, QueuePeek, ReleaseInput, Settings, SiteId, SiteSettings, TaskDef,
+  LogLine, MonitorEntry, MonitorFound, MonitorInput, ProductSizes, Profile, ProfilePatch, QueuePeek, ReleaseInput, Settings, SiteId, SiteSettings, TaskDef,
   TaskRuntime,
 } from "../shared/types.js";
 import { MonitorManager } from "./monitorManager.js";
@@ -520,6 +520,16 @@ function registerIpc(): void {
   });
   ipcMain.handle("aio:sitesInfo", () => m().sitesInfo());
   ipcMain.handle("aio:productNames", () => productNames.all());
+  // 폼의 사이즈 고르기 — 사이즈를 바깥에서 못 읽는 사이트는 null. 못 받은 것은 던지지 않고 까닭을 실어 보낸다 (폼이 그 자리에 적는다).
+  ipcMain.handle("aio:productSizes", async (_e, site: SiteId, url: string): Promise<ProductSizes | null> => {
+    const read = ADAPTERS[site]?.productSizes;
+    if (!read) return null;
+    try {
+      return await read(String(url ?? ""));
+    } catch (e) {
+      return { name: "", price: 0, availableFrom: null, perUser: 0, sizes: [], error: (e as Error).message || "사이즈를 받지 못했습니다" };
+    }
+  });
   ipcMain.handle("aio:prepareSite", (_e, site: SiteId) => m().prepareSite(site));
   ipcMain.handle("aio:listProfiles", () => sessions.list());
   ipcMain.handle("aio:createProfile", (_e, site: SiteId, name: string, memo?: string) =>
@@ -715,9 +725,9 @@ app.whenReady().then(() => {
     if (def && ADAPTERS[def.site].productNameLine) productNames.noteLine(def.site, def.productUrl, l.text);
   });
   monitors.on("found", (raw: MonitorFound) => {
-    // 이름을 비워 둔 모니터는 알림·디스코드에도 상품번호 대신 읽어 둔 이름을.
+    // 이름을 비워 둔 모니터는 알림·디스코드에도 상품번호 대신 읽어 둔 이름을. 신상품은 이미 그 상품 이름이다.
     const def = monitors.list().find((e) => e.def.id === raw.monitorId)?.def;
-    const found = def ? { ...raw, name: monitorShownName(def, productNames.all()) } : raw;
+    const found = def && raw.kind === "stock" ? { ...raw, name: monitorShownName(def, productNames.all()) } : raw;
     win?.webContents.send("monitor:found", found);
     toMonitorPopup(found.monitorId, "monitor:found", found);
     // 앱이 뒤에 있으면 작업 표시줄에서 깜빡인다 (앞으로 오면 멈춘다).

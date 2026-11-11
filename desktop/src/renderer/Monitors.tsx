@@ -4,22 +4,20 @@
  */
 import { useState, type ReactNode } from "react";
 import {
-  MONITOR_MIN_INTERVAL_MS, MONITOR_RUNNING, MONITOR_STATUS_LABEL, monitorIntervalWarning, monitorProblem, monitorShownName, ON_FOUND_LABEL,
+  foundWord, isCategoryMonitor, MONITOR_MIN_INTERVAL_MS, MONITOR_RUNNING, MONITOR_STATUS_LABEL, monitorIntervalWarning, monitorProblem,
+  monitorShownName, monitorUrlOk, ON_FOUND_LABEL,
 } from "../shared/monitors";
-import { SITE_IDS, SITES, siteOfUrl } from "../shared/sites";
+import { isNaverCategory, SITE_IDS, SITES, siteOfUrl } from "../shared/sites";
 import type { MonitorEntry, MonitorFound, MonitorInput, MonitorStatus, Profile, SiteId, SiteInfo } from "../shared/types";
+import { Icon } from "./icons";
 import { errText, LOGIN_LABEL, SiteTag, span, when } from "./App";
+import { ProductSizePicker } from "./SizePicker";
 
 const aio = window.aio;
 
 /** 메인 창 로그 패널이 모니터의 로그를 보일 때의 이름 (태스크 id 와 섞이지 않게). */
 export const MONITOR_LOG = "__monitor__:";
 export const monitorLog = (id: string): string => `${MONITOR_LOG}${id}`;
-
-/** 목록·창 제목 앞의 표시. */
-export const MONITOR_DOT: Record<MonitorStatus, string> = {
-  idle: "⚪", monitoring: "🟢", found: "🔴", paused: "⏸", stopping: "🟡", stopped: "⚪", error: "⚠️",
-};
 
 /** 17:30:12 */
 export function clockOf(iso: string | undefined): string {
@@ -64,12 +62,12 @@ export function FoundAlerts({ alerts, monitors, profiles, onSwitched, onDismiss 
         const entry = monitors.find((m) => m.def.id === f.monitorId);
         return (
           <div key={f.monitorId} className="found-alert">
-            <span className="found-bell">🔔</span>
+            <span className="found-bell"><Icon name="bell" /></span>
             <div className="grow">
-              <b>재고 발견!</b> <span className="muted">{SITES[f.site].name}</span> — {f.name}
+              <b>{f.kind === "new" ? "신상품 발견" : "재고 발견"}</b> <span className="muted">{SITES[f.site].name}</span> — {f.name}
               <span className="muted"> | {clockOf(f.at)}</span>
             </div>
-            <button type="button" className="btn small" onClick={() => void aio.monitor.openPopup(f.monitorId)}>🖥 팝업</button>
+            <button type="button" className="btn small" onClick={() => void aio.monitor.openPopup(f.monitorId)}><Icon name="window" />팝업</button>
             {f.onFound === "switch_to_task" && entry && (
               <button
                 type="button" className="btn small buy"
@@ -78,7 +76,7 @@ export function FoundAlerts({ alerts, monitors, profiles, onSwitched, onDismiss 
                   if (taskId) onSwitched(f.monitorId, taskId);
                 }}
               >
-                🛒 구매 전환
+                <Icon name="cart" />구매 전환
               </button>
             )}
             <button type="button" className="btn small ghost" onClick={() => onDismiss(f.monitorId)}>닫기</button>
@@ -168,9 +166,9 @@ function MonitorCard({ entry, name, profiles, now, selected, onSelect, onEdit, o
 
   let line: ReactNode;
   if (state.status === "found") {
-    line = <span className="found-text">재고 발견! {clockOf(state.foundAt)} <span className="muted">· 체크 #{state.checkCount} · 계속 봅니다</span></span>;
+    line = <span className="found-text">{foundWord(def)}! {clockOf(state.foundAt)} <span className="muted">· 체크 #{state.checkCount} · 계속 봅니다</span></span>;
   } else if (state.status === "monitoring" || state.status === "stopping") {
-    line = <>체크 #{state.checkCount} | {state.lastCheckAt ? agoOf(state.lastCheckAt, now) : "첫 확인 전"} | 재고: {state.stock ?? "—"}</>;
+    line = <>체크 #{state.checkCount} | {state.lastCheckAt ? agoOf(state.lastCheckAt, now) : "첫 확인 전"} | {isCategoryMonitor(def) ? "목록" : "재고"}: {state.stock ?? "—"}</>;
   } else if (state.status === "paused") {
     line = <>일시정지 · 체크 #{state.checkCount} <span className="muted">· 재개하면 이어서 봅니다 (그 사이에 풀린 재입고는 놓칠 수 있습니다)</span></>;
   } else if (state.status === "error") {
@@ -182,7 +180,7 @@ function MonitorCard({ entry, name, profiles, now, selected, onSelect, onEdit, o
   return (
     <div className={`monitor-card ${state.status} ${selected ? "sel" : ""}`} onClick={onSelect}>
       <div className="card-top">
-        <span>{MONITOR_DOT[state.status]}</span>
+        <span className={`mon-dot ${state.status}`} />
         <SiteTag site={def.site} />
         <b className="grow" title={name !== def.name ? `상품번호 ${def.name}` : undefined}>{name}</b>
         <span className={`pill mon ${state.status}`}>{MONITOR_STATUS_LABEL[state.status]}</span>
@@ -190,11 +188,11 @@ function MonitorCard({ entry, name, profiles, now, selected, onSelect, onEdit, o
       <div className="small">{line}</div>
       {live && state.note && <div className="mon-note small" title="원본이 기다리는 동안 제자리에서 고쳐 쓰는 줄">{state.note}</div>}
       <div className="muted small">
-        {span(def.checkIntervalMs)}마다 · {def.restockOnly ? "재입고 순간만" : "지금 팔고 있어도"} 발견 · 발견 시 {ON_FOUND_LABEL[def.onFound]}
+        {span(def.checkIntervalMs)}마다 · {isCategoryMonitor(def) ? "새로 올라온 상품" : def.restockOnly ? "재입고 순간만" : "지금 팔고 있어도"} 발견 · 발견 시 {ON_FOUND_LABEL[def.onFound]}
         {" · "}프로필 {profile ? profile.name : def.profileId ? "지워짐" : "없음"}
       </div>
       <div className="account-actions" onClick={(e) => e.stopPropagation()}>
-        <button type="button" className="btn small" onClick={() => void aio.monitor.openPopup(def.id)}>🖥 팝업</button>
+        <button type="button" className="btn small" onClick={() => void aio.monitor.openPopup(def.id)}><Icon name="window" />팝업</button>
         {state.status === "found" && def.onFound === "switch_to_task" && (
           <button
             type="button" className="btn small buy" disabled={busy}
@@ -203,13 +201,13 @@ function MonitorCard({ entry, name, profiles, now, selected, onSelect, onEdit, o
               if (taskId) onSwitched(def.id, taskId);
             })}
           >
-            🛒 구매 전환
+            <Icon name="cart" />구매 전환
           </button>
         )}
         {(state.status === "monitoring" || state.status === "found") && (
           <>
-            <button type="button" className="btn small" disabled={busy} onClick={() => void act(() => aio.monitor.pause(def.id))}>⏸ 일시정지</button>
-            <button type="button" className="btn small stop" disabled={busy} onClick={() => void act(() => aio.monitor.stop(def.id))}>⏹ 중지</button>
+            <button type="button" className="btn small" disabled={busy} onClick={() => void act(() => aio.monitor.pause(def.id))}><Icon name="pause" />일시정지</button>
+            <button type="button" className="btn small stop" disabled={busy} onClick={() => void act(() => aio.monitor.stop(def.id))}><Icon name="stop" />중지</button>
           </>
         )}
         {state.status === "stopping" && (
@@ -217,21 +215,21 @@ function MonitorCard({ entry, name, profiles, now, selected, onSelect, onEdit, o
         )}
         {state.status === "paused" && (
           <>
-            <button type="button" className="btn small go" disabled={busy} onClick={() => void act(async () => onUpsert(await aio.monitor.start(def.id)))}>▶ 재개</button>
-            <button type="button" className="btn small stop" disabled={busy} onClick={() => void act(() => aio.monitor.stop(def.id))}>⏹ 중지</button>
+            <button type="button" className="btn small go" disabled={busy} onClick={() => void act(async () => onUpsert(await aio.monitor.start(def.id)))}><Icon name="play" />재개</button>
+            <button type="button" className="btn small stop" disabled={busy} onClick={() => void act(() => aio.monitor.stop(def.id))}><Icon name="stop" />중지</button>
           </>
         )}
         {!live && state.status !== "paused" && (
-          <button type="button" className="btn small go" disabled={busy} onClick={() => void act(async () => onUpsert(await aio.monitor.start(def.id)))}>▶ 시작</button>
+          <button type="button" className="btn small go" disabled={busy} onClick={() => void act(async () => onUpsert(await aio.monitor.start(def.id)))}><Icon name="play" />시작</button>
         )}
         <span className="grow" />
-        <button type="button" className="icon" title={live ? "고치기 — 저장하면 바뀐 설정으로 다시 띄웁니다" : "고치기"} disabled={state.status === "stopping"} onClick={onEdit}>✎</button>
+        <button type="button" className="icon" title={live ? "고치기 — 저장하면 바뀐 설정으로 다시 띄웁니다" : "고치기"} disabled={state.status === "stopping"} onClick={onEdit}><Icon name="edit" /></button>
         <button
           type="button" className="icon" title="지우기" disabled={busy}
           onClick={() => void aio.ask(`'${name}' 모니터를 지울까요?${live ? " 돌고 있으면 멈춥니다." : ""} 모니터 폴더와 로그도 지워집니다.`)
             .then((ok) => { if (ok) void act(async () => onChanged(await aio.monitor.delete(def.id))); })}
         >
-          ✕
+          <Icon name="x" />
         </button>
       </div>
       {fail && <span className="err small">{fail}</span>}
@@ -242,7 +240,7 @@ function MonitorCard({ entry, name, profiles, now, selected, onSelect, onEdit, o
 // ── 만들기 · 고치기 폼 ──────────────────────────────────────────────────────
 
 /** 간격을 비워 둘 때 — 롯데는 씨앗 하한(드랍 걸음이 아니게), 네이버는 권장선 안쪽. */
-const DEFAULT_INTERVAL_MS: Record<SiteId, number> = { lotte: 5000, naver: 10000, bnkr: 15000, supreme: 2500, kream: 5000 };
+const DEFAULT_INTERVAL_MS: Record<SiteId, number> = { lotte: 5000, naver: 10000, bnkr: 15000, supreme: 2500, kream: 5000, carhartt: 5000 };
 
 function blankInput(site: SiteId, profiles: Profile[]): MonitorInput {
   const mine = profiles.filter((p) => p.site === site && p.isActive);
@@ -275,9 +273,11 @@ function MonitorForm({ initial, profiles, infos, onSaved, onCancel }: {
     setM((prev) => ({ ...blankInput(site, profiles), name: prev.name, productUrl: prev.productUrl, option: prev.option, ea: prev.ea, maxPrice: prev.maxPrice }));
   };
   const setUrl = (url: string) => {
-    const guessed = siteOfUrl(url);
+    // 카테고리 주소는 태스크 주소(isProductUrl)가 아니라 siteOfUrl 이 모른다 — 모니터만 받는 네이버 주소다.
+    const guessed = siteOfUrl(url) ?? (isNaverCategory(url) ? "naver" : null);
     if (!initial && guessed && guessed !== m.site) setSite(guessed);
-    set("productUrl", url);
+    // 카테고리는 알림만 된다 (구매로 넘길 상품이 없다).
+    setM((prev) => ({ ...prev, productUrl: url, ...(isNaverCategory(url) ? { onFound: "notify" as const } : {}) }));
   };
 
   const spec = SITES[m.site];
@@ -288,6 +288,7 @@ function MonitorForm({ initial, profiles, infos, onSaved, onCancel }: {
   const warning = info ? monitorIntervalWarning(m.site, m.checkIntervalMs, info.timing) : null;
   const needProfileForSwitch = m.onFound === "switch_to_task" && !m.profileId;
   const minSec = MONITOR_MIN_INTERVAL_MS[m.site] / 1000;
+  const category = isCategoryMonitor(m);
 
   return (
     <div className="modal-back" onClick={onCancel}>
@@ -330,34 +331,51 @@ function MonitorForm({ initial, profiles, infos, onSaved, onCancel }: {
         <fieldset className="timing">
           <legend>대상 설정 <span className="muted">— 원본 설정의 대상 한 줄로 적습니다</span></legend>
           <label>
-            제품 URL
+            제품 URL{m.site === "naver" && <span className="muted"> (카테고리 주소 …/&lt;스토어&gt;/category/… 면 신상품을 봅니다)</span>}
             <input value={m.productUrl} placeholder={spec.placeholder} onChange={(e) => setUrl(e.target.value)} />
-            {m.productUrl && !spec.isProductUrl(m.productUrl) && <span className="err">{spec.urlError}</span>}
+            {m.productUrl && !monitorUrlOk(m) && <span className="err">{spec.urlError}</span>}
           </label>
-          <div className="row">
-            <label>
-              옵션 <span className="muted">(글자 일부)</span>
-              <input value={m.option} placeholder={m.site === "lotte" ? "블랙 / 270" : "270"} onChange={(e) => set("option", e.target.value)} />
-            </label>
-            <label className="narrow">
-              수량
-              <input type="number" min={1} value={m.ea} onChange={(e) => set("ea", Math.max(1, Math.trunc(Number(e.target.value)) || 1))} />
-            </label>
-            <label>
-              상한가 <span className="muted">(비워 두면 무제한)</span>
-              <input
-                type="number" min={0} value={m.maxPrice || ""} placeholder="무제한"
-                onChange={(e) => set("maxPrice", Math.max(0, Math.trunc(Number(e.target.value)) || 0))}
-              />
-            </label>
-          </div>
-          <p className="muted small">
-            {m.site === "lotte"
-              ? "롯데는 주소의 단품(sitmNo)으로 재고를 봅니다 — 옵션 글자는 구매로 전환했을 때 고르는 데 씁니다. 상한가를 넘으면 발견으로 보지 않습니다."
-              : m.site === "supreme"
-                ? "슈프림은 Shopify 목록(막혀 있으면 페이지 HTML)으로 보고, 옵션(사이즈)은 상품 페이지에서 확인합니다. 상한가를 넘으면 발견으로 보지 않습니다."
-                : "네이버는 옵션 재고까지 봅니다 — 옵션을 적으면 그 옵션이 풀려야 발견입니다. 상한가를 넘으면 발견으로 보지 않습니다."}
-          </p>
+          {category ? (
+            <p className="muted small">
+              카테고리를 최신 등록순으로 훑어 <b>처음 보는 상품</b>이 올라오면 알립니다 (원본의 카테고리 신상품 감시). 첫 확인은 기준선이라
+              알리지 않습니다 — 모니터를 껐다 켜면 기준선을 다시 잡습니다. 옵션·수량·상한가는 쓰지 않습니다.
+            </p>
+          ) : (
+            <>
+              {/* 칼하트윕은 옵션이 사이즈다 — 고른 사이즈가 풀려야 발견이다 (안 고르면 사이즈가 하나뿐인 상품만 본다). */}
+              {m.site === "carhartt" && (
+                <ProductSizePicker site={m.site} url={m.productUrl} valid={monitorUrlOk(m)} option={m.option} onChange={(option) => set("option", option)} />
+              )}
+              <div className="row">
+                {m.site !== "carhartt" && (
+                  <label>
+                    옵션 <span className="muted">(글자 일부)</span>
+                    <input value={m.option} placeholder={m.site === "lotte" ? "블랙 / 270" : "270"} onChange={(e) => set("option", e.target.value)} />
+                  </label>
+                )}
+                <label className="narrow">
+                  수량
+                  <input type="number" min={1} value={m.ea} onChange={(e) => set("ea", Math.max(1, Math.trunc(Number(e.target.value)) || 1))} />
+                </label>
+                <label>
+                  상한가 <span className="muted">(비워 두면 무제한)</span>
+                  <input
+                    type="number" min={0} value={m.maxPrice || ""} placeholder="무제한"
+                    onChange={(e) => set("maxPrice", Math.max(0, Math.trunc(Number(e.target.value)) || 0))}
+                  />
+                </label>
+              </div>
+              <p className="muted small">
+                {m.site === "lotte"
+                  ? "롯데는 주소의 단품(sitmNo)으로 재고를 봅니다 — 옵션 글자는 구매로 전환했을 때 고르는 데 씁니다. 상한가를 넘으면 발견으로 보지 않습니다."
+                  : m.site === "carhartt"
+                    ? "칼하트윕은 사이즈마다 남은 수량을 봅니다 — 고른 사이즈 가운데 하나라도 풀리면 발견입니다 (발매 전 상품은 발매 시각이 되어야 발견). 상한가를 넘으면 감시를 시작하지 않습니다."
+                  : m.site === "supreme"
+                    ?"슈프림은 Shopify 목록(막혀 있으면 페이지 HTML)으로 보고, 옵션(사이즈)은 상품 페이지에서 확인합니다. 상한가를 넘으면 발견으로 보지 않습니다."
+                    : "네이버는 옵션 재고까지 봅니다 — 옵션을 적으면 그 옵션이 풀려야 발견입니다. 상한가를 넘으면 발견으로 보지 않습니다."}
+              </p>
+            </>
+          )}
         </fieldset>
 
         <fieldset className="timing">
@@ -378,38 +396,40 @@ function MonitorForm({ initial, profiles, infos, onSaved, onCancel }: {
               </select>
             </label>
           </div>
-          {warning && <p className="warn-line small">⚠️ {warning}</p>}
+          {warning && <p className="warn-line small"><Icon name="alert" /> {warning}</p>}
           {SITES[m.site].oneTaskPerProfile && (
             <p className="muted small">{SITES[m.site].name}는 한 프로필로 태스크·모니터를 통틀어 하나만 돌립니다 (같은 로그인 세션).</p>
           )}
           {picked && picked.loginStatus !== "logged_in" && (
-            <p className="warn-line small">⚠️ '{picked.name}' 은(는) {LOGIN_LABEL[picked.loginStatus]} 상태입니다 — 프로필 화면에서 로그인하세요.</p>
+            <p className="warn-line small"><Icon name="alert" /> '{picked.name}' 은(는) {LOGIN_LABEL[picked.loginStatus]} 상태입니다 — 프로필 화면에서 로그인하세요.</p>
           )}
-          <label className="check">
-            <input type="checkbox" checked={m.restockOnly} onChange={(e) => set("restockOnly", e.target.checked)} />
-            재입고 순간에만 감지
-            <span className="muted small">— 체크 해제하면 현재 판매 중이어도 발견으로 처리합니다</span>
-          </label>
+          {!category && (
+            <label className="check">
+              <input type="checkbox" checked={m.restockOnly} onChange={(e) => set("restockOnly", e.target.checked)} />
+              재입고 순간에만 감지
+              <span className="muted small">— 체크 해제하면 현재 판매 중이어도 발견으로 처리합니다</span>
+            </label>
+          )}
         </fieldset>
 
         <fieldset className="timing">
-          <legend>재고 발견 시</legend>
+          <legend>{foundWord(m)} 시</legend>
           <label className="check">
             <input type="radio" name="onFound" checked={m.onFound === "notify"} onChange={() => set("onFound", "notify")} />
             알림만 <span className="muted small">— 메인 창·모니터 창·디스코드로 알리고 계속 봅니다</span>
           </label>
           <label className="check">
-            <input type="radio" name="onFound" checked={m.onFound === "switch_to_task"} onChange={() => set("onFound", "switch_to_task")} />
-            구매 태스크로 전환 <span className="muted small">— 알리고 🛒 구매 전환 버튼을 띄웁니다. 누르면 모니터를 멈추고 같은 대상으로 지금 구매를 띄웁니다 (저절로 전환하지는 않습니다)</span>
+            <input type="radio" name="onFound" checked={m.onFound === "switch_to_task"} disabled={category} onChange={() => set("onFound", "switch_to_task")} />
+            구매 태스크로 전환 <span className="muted small">— 알리고 구매 전환 버튼을 띄웁니다. 누르면 모니터를 멈추고 같은 대상으로 지금 구매를 띄웁니다 (저절로 전환하지는 않습니다)</span>
           </label>
-          {needProfileForSwitch && <p className="warn-line small">⚠️ 구매 전환을 하려면 로그인 프로필이 필요합니다.</p>}
+          {needProfileForSwitch && <p className="warn-line small"><Icon name="alert" /> 구매 전환을 하려면 로그인 프로필이 필요합니다.</p>}
         </fieldset>
 
         {problem && !needProfileForSwitch && m.productUrl && <p className="err small">{problem}</p>}
         {fail && <p className="err small">{fail}</p>}
         <div className="modal-actions">
           <button type="button" className="btn ghost" onClick={onCancel}>취소</button>
-          <button type="submit" className="btn primary" disabled={!!problem || saving}>{initial ? "저장" : "➕ 추가"}</button>
+          <button type="submit" className="btn primary" disabled={!!problem || saving}>{initial ? "저장" : "추가"}</button>
         </div>
       </form>
     </div>

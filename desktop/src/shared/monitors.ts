@@ -1,7 +1,7 @@
 /**
  * 모니터의 규칙. 폼(화면)과 main(저장·시작)이 같은 답을 내게 여기 둔다. 타입은 types.ts 에 있다.
  */
-import { isNaverSearch, productKey, SITES } from "./sites.js";
+import { isNaverCategory, isNaverSearch, productKey, SITES } from "./sites.js";
 import type { MonitorDef, MonitorInput, MonitorOnFound, MonitorStatus, SiteId, TimingDefaults } from "./types.js";
 
 export const MONITOR_STATUS_LABEL: Record<MonitorStatus, string> = {
@@ -38,7 +38,7 @@ export function monitorIntervalWarning(site: SiteId, ms: number, timing: TimingD
  *          아래는 드랍 걸음(--drop)으로 돈다
  *   네이버 2초 — 상품 하나를 이보다 자주 보면 원본이 요청률 거부선(분당 30회)에 걸려 시작하지 않는다
  */
-export const MONITOR_MIN_INTERVAL_MS: Record<SiteId, number> = { lotte: 500, naver: 2000, bnkr: 3000, supreme: 2500, kream: 3000 };
+export const MONITOR_MIN_INTERVAL_MS: Record<SiteId, number> = { lotte: 500, naver: 2000, bnkr: 3000, supreme: 2500, kream: 1000, carhartt: 500 };
 
 export const ON_FOUND_LABEL: Record<MonitorOnFound, string> = {
   notify: "알림만",
@@ -63,12 +63,29 @@ export function monitorShownName(def: Pick<MonitorDef, "name" | "site" | "produc
   return (monitorUnnamed(def) && names[productKey(def.site, def.productUrl)]) || def.name;
 }
 
+/** 네이버 카테고리 모니터 — 재고가 아니라 카테고리에 처음 올라온 상품(신상품)을 알린다. */
+export function isCategoryMonitor(m: Pick<MonitorInput, "site" | "productUrl">): boolean {
+  return m.site === "naver" && isNaverCategory(m.productUrl);
+}
+
+/** 모니터가 받는 주소인가. 네이버는 상품 주소 말고 카테고리 주소도 받는다 (태스크는 못 받는다). */
+export function monitorUrlOk(m: Pick<MonitorInput, "site" | "productUrl">): boolean {
+  return SITES[m.site].isProductUrl(m.productUrl) || isCategoryMonitor(m);
+}
+
+/** 모니터가 알리는 것 — "재고 발견" · "신상품 발견". */
+export function foundWord(m: Pick<MonitorInput, "site" | "productUrl">): string {
+  return isCategoryMonitor(m) ? "신상품 발견" : "재고 발견";
+}
+
 /** 만들거나 고칠 수 없는 까닭. 괜찮으면 null. */
 export function monitorProblem(m: MonitorInput): string | null {
   const spec = SITES[m.site];
   if (!spec) return `모르는 사이트입니다: ${String(m.site)}`;
   if (!spec.monitors) return `${spec.name}는 모니터를 지원하지 않습니다 — 원본의 드라이런이 한 번만 보고 끝납니다. 태스크로 돌리세요.`;
-  if (!spec.isProductUrl(m.productUrl)) return spec.urlError;
+  if (!monitorUrlOk(m)) return m.site === "naver" ? `${spec.urlError} (모니터는 카테고리 주소 …/<스토어>/category/… 도 받습니다)` : spec.urlError;
+  // 카테고리는 살 상품 하나가 아니라 목록이다 — 구매로 넘길 대상이 없다.
+  if (isCategoryMonitor(m) && m.onFound !== "notify") return "카테고리 모니터는 알림만 됩니다 — 새로 올라온 상품을 알려 줍니다. 사려면 그 상품으로 태스크를 만드세요.";
   // 네이버 스토어 검색은 태스크만 — 모니터는 원본 설정의 products 에 상품 하나를 적어 돈다.
   if (m.site === "naver" && isNaverSearch(m.productUrl)) return "네이버 스토어 검색(키워드)은 모니터로 볼 수 없습니다 — 태스크로 돌리세요.";
   if (!Number.isFinite(m.checkIntervalMs) || m.checkIntervalMs < MONITOR_MIN_INTERVAL_MS[m.site]) {

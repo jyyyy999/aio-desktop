@@ -4,7 +4,7 @@
  */
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import type {
-  CommonSettings, LoginStatus, MonitorDef, Profile, QueuePeek, SiteId, SiteInfo, SiteSettings, TaskDef,
+  CommonSettings, LoginStatus, MonitorDef, ProductSizes, Profile, QueuePeek, SiteId, SiteInfo, SiteSettings, TaskDef,
 } from "../../shared/types.js";
 
 /**
@@ -154,10 +154,14 @@ export interface ProgressSignal {
  *   found  발견. 원본이 dry-run 일 때 구매 자리에서만 찍는 줄이다 — 원본의 구매 판단(재입고 순간·옵션 재고·상한가)을
  *          통과했다는 뜻이라 이 줄 말고는 발견으로 보지 않는다 (오탐 방지). 첫 묶음은 상품 주소.
  *   stock  원본이 말한 재고 판정. 첫 묶음을 MonitorState.stock 에 둔다.
+ *   fresh  카테고리 모니터(네이버)에서 처음 보는 상품이 올라왔다는 줄. 묶음: 1 상품 이름 · 2 상품 주소.
+ *   listed 카테고리 모니터가 한 번 훑은 결과 (MonitorState.stock 자리에 둔다). 첫 묶음.
  */
 export interface MonitorSignal {
   found: RegExp;
   stock: RegExp;
+  fresh?: RegExp;
+  listed?: RegExp;
 }
 
 export interface PrepareCommand {
@@ -241,6 +245,11 @@ export interface SiteAdapter {
    * 상품번호 대신 이름을 보이게. 못 읽으면 null. 없는 사이트는 원본 출력(productNameLine)에서만 안다.
    */
   productName?(url: string): Promise<string | null>;
+  /**
+   * 상품의 사이즈와 재고를 바깥에서 읽는다 — 쿠키 없이. 폼의 사이즈 고르기가 주소를 적을 때 부른다.
+   * 사이즈를 공개 API 로 주는 사이트(칼하트윕)만 있다. 못 받으면 던진다.
+   */
+  productSizes?(url: string): Promise<ProductSizes>;
   /** 원본이 상품 이름을 찍는 줄. 첫 묶음이 이름이다. */
   productNameLine?: RegExp;
 }

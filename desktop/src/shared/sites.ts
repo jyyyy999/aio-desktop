@@ -62,6 +62,11 @@ export const BNKR_ACTIONS = ["open", "agree", "submit"] as const;
 export const SUPREME_ACTIONS = [] as const;
 /** KREAM 브랜드배송 — 주문서까지 / 결제하기까지 (원본 kream/config.ts 의 ACTIONS). */
 export const KREAM_ACTIONS = ["open", "submit"] as const;
+/**
+ * 칼하트윕 — 주문서까지 / 결제 비밀번호까지 (원본 carhartt/index.ts 의 --action).
+ * submit 은 결제하기를 누르고 토스 간편결제(브랜드페이) 비밀번호 자판 6자리까지 누른다 — 프로필 비밀번호가 있을 때.
+ */
+export const CARHARTT_ACTIONS = ["open", "submit"] as const;
 
 export interface SiteSpec {
   id: SiteId;
@@ -141,7 +146,9 @@ export const SITES: Record<SiteId, SiteSpec> = {
     // 원본 commands.ts 의 urlFrom 과 같은 모양이다. 꼬리(?nl-au=…)는 원본이 떼어 낸다.
     // **스토어 검색 주소도 받는다** — 아직 번호가 없는 상품을 그 검색 결과에서 기다린다 (isNaverSearch).
     isProductUrl: (url) => /https?:\/\/(?:brand|smartstore)\.naver\.com\/[^/\s]+\/products\/\d+/.test(url.trim()) || isNaverSearch(url),
-    productCode: (url) => /products\/(\d+)/.exec(url)?.[1] ?? (isNaverSearch(url) ? naverKeywordText(url) : url.trim()),
+    productCode: (url) =>
+      /products\/(\d+)/.exec(url)?.[1] ??
+      (isNaverSearch(url) ? naverKeywordText(url) : isNaverCategory(url) ? naverCategoryText(url) : url.trim()),
     liveFields: [],
     modes: ["watch", "once", "buy", "dry-run", "status"],
     loginOptional: [],
@@ -215,6 +222,28 @@ export const SITES: Record<SiteId, SiteSpec> = {
     monitors: true,
     payProfileSite: null,
   },
+  carhartt: {
+    id: "carhartt",
+    name: "칼하트윕",
+    tag: "CARHARTT",
+    // 담기 → 주문 생성 → 주문서 창. submit 이면 결제하기·토스 간편결제 비밀번호까지 (프로필 비밀번호가 있을 때).
+    actions: CARHARTT_ACTIONS,
+    actionLabel: { open: "주문서까지", agree: "—", submit: "결제 비밀번호까지" },
+    placeholder: "https://www.carhartt-wip.co.kr/products/343826  (옵션 칸에 사이즈 — 270,275)",
+    urlError: "칼하트윕 상품 주소(carhartt-wip.co.kr/products/번호)나 상품번호가 아닙니다.",
+    isProductUrl: (url) => /(?:^|\/\/)(?:www\.)?carhartt-wip\.co\.kr\/products\/\d+|^\d{3,}$/.test(url.trim()),
+    productCode: (url) => /\/products\/(\d+)/.exec(url.trim())?.[1] ?? url.trim(),
+    // 원본은 대상을 명령줄로 받는다 — 돌던 중에 고치면 다시 시작해야 반영된다.
+    liveFields: [],
+    // 드랍 모드는 없다 — 발매 전 상품은 지켜보기·지금 구매가 발매 시각까지 기다렸다가 누른다.
+    modes: ["watch", "once", "buy", "dry-run", "status"],
+    // 재고는 공개 API 로 본다 (로그인 없이 사이즈마다 수량까지). 사려면 로그인해야 한다.
+    loginOptional: ["status", "dry-run"],
+    // 장바구니와 주문서는 계정에 하나다 — 같은 프로필로 둘이 사면 주문서가 나중 것으로 바뀐다. 막지는 않는다 (다른 사이트와 같다).
+    oneTaskPerProfile: false,
+    monitors: true,
+    payProfileSite: null,
+  },
 };
 
 export const SITE_IDS = Object.keys(SITES) as SiteId[];
@@ -267,6 +296,21 @@ export function naverKeywordText(url: string): string {
   } catch {
     return url.trim();
   }
+}
+
+/**
+ * 네이버 스토어 카테고리 — smartstore.naver.com/<스토어>/category/<id> (브랜드스토어도). 원본 parse.ts 의 isCategory 와
+ * 같은 모양이다. **모니터만** 받는다 — 원본이 최신 등록순 목록을 훑어 처음 보는 상품을 알린다 (설정의 categories).
+ * 사는 대상이 아니라 isProductUrl 에는 넣지 않는다 (태스크는 못 받는다).
+ */
+export function isNaverCategory(url: string): boolean {
+  return /^https?:\/\/(?:brand|smartstore)\.naver\.com\/[^/?#\s]+\/category\/[^/?#\s]+/.test(url.trim());
+}
+
+/** 표에 보일 이름 — "<스토어> 카테고리 <id 앞 6자>" (한 스토어에 카테고리가 여럿일 수 있다). */
+export function naverCategoryText(url: string): string {
+  const m = /naver\.com\/([^/?#\s]+)\/category\/([^/?#\s]+)/.exec(url.trim());
+  return m ? `${m[1]} 카테고리 ${m[2]!.slice(0, 6)}` : url.trim();
 }
 
 /**

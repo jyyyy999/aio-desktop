@@ -42,13 +42,17 @@ export function sendTest(url: string): Promise<{ ok: boolean; message: string }>
 /** 모니터가 재고를 발견했다. */
 export function sendFound(url: string, found: MonitorFound): Promise<{ ok: boolean; message: string }> {
   const site = SITES[found.site].name;
-  const next = found.onFound === "switch_to_task"
-    ? "앱에서 '구매 전환' 을 누르면 같은 대상으로 지금 구매 태스크가 뜹니다."
-    : "알림만 보내는 모니터입니다. 모니터는 계속 봅니다.";
+  const next = found.kind === "new"
+    ? "카테고리에 처음 보는 상품이 올라왔습니다. 모니터는 계속 봅니다."
+    : found.onFound === "switch_to_task"
+      ? "앱에서 '구매 전환' 을 누르면 같은 대상으로 지금 구매 태스크가 뜹니다."
+      : "알림만 보내는 모니터입니다. 모니터는 계속 봅니다.";
+  const [mark, word] = found.kind === "new" ? ["🆕", "신상품 발견!"] : ["🔴", "재고 발견!"];
+  const head = `${mark} ${word}`;
   return post(url, {
-    content: `🔴 **${found.name}** 재고 발견! ${found.url}`,
+    content: `${mark} **${found.name}** ${word} ${found.url}`,
     embeds: [{
-      title: `🔴 재고 발견! — ${site} ${found.name}`,
+      title: `${head} — ${site} ${found.name}`,
       url: found.url,
       description: next,
       color: 0xef4444,

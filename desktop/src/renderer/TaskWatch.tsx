@@ -12,6 +12,7 @@ import {
   copyText, countdown, errText, idleRuntime, LIVE, LOGIN_LABEL, LogView, mergeLogs, SiteTag, span, STATUS_LABEL, targetText, uptime,
 } from "./App";
 import { isSupremeProductUrl } from "../shared/supremeSpec";
+import { Icon } from "./icons";
 
 const aio = window.aio;
 
@@ -438,10 +439,10 @@ export function TaskWatch({ taskId }: { taskId: string }) {
 
       <footer className="tw-foot">
         <button type="button" className="btn small" onClick={() => setFrozen(frozen ? null : logs)}>
-          {frozen ? "▶ 이어 보기" : "⏸ 일시정지"}
+          {frozen ? <><Icon name="play" />이어 보기</> : <><Icon name="pause" />일시정지</>}
         </button>
         <button type="button" className="btn small" disabled={capturing} onClick={() => void capture()} title="이 창의 모습(PNG)과 로그(텍스트)를 태스크 폴더에 적습니다">
-          📸 캡처
+          <Icon name="camera" />캡처
         </button>
         <button type="button" className="btn small ghost" onClick={() => void aio.openHome(taskId)}>폴더 열기</button>
         <button

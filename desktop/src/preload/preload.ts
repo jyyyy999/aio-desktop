@@ -71,6 +71,7 @@ const api: AioApi = {
   saveSettings: (s) => call("saveSettings", s),
   sitesInfo: () => call("sitesInfo"),
   productNames: () => call("productNames"),
+  productSizes: (site, url) => call("productSizes", site, url),
   onProductNames: (cb) => listen<Record<string, string>>("aio:productNamesChanged", cb),
   prepareSite: (site) => call("prepareSite", site),
   listProfiles: () => call("listProfiles"),

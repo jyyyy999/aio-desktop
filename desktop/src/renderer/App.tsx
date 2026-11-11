@@ -12,6 +12,7 @@ import { monitorShownName } from "../shared/monitors";
 import { isPast, isToday, ReleasesPage } from "./Releases";
 import { SupremeOrderPage } from "./SupremeOrder";
 import { Icon, LogoMark } from "./icons";
+import { ProductSizePicker } from "./SizePicker";
 import {
   SUPREME_CATEGORIES, describeSupremeCategories, describeSupremeOption, hasSupremeKeyword, isSupremeProductUrl,
   joinSupremeOption, shortSupremeSize, splitSupremeOption, SUPREME_SIZE_GROUPS, supremeCategories, supremeKeywords,
@@ -428,7 +429,7 @@ export function App() {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <LogoMark /><span className="wordmark">AIO</span><span className="sub">TASK MANAGER</span>
+          <LogoMark /><span className="wordmark">AIO</span><span className="sub">Task manager</span>
         </div>
         <div className="stats">
           <Stat label="태스크" value={tasks.length} />
@@ -442,8 +443,8 @@ export function App() {
             const paySite = SITES[site].payProfileSite;
             setEditing(blankTask(site, defaultProfile(profiles, site), paySite ? defaultProfile(profiles, paySite) : undefined));
           }}>+ 태스크</button>
-          <button className="btn go" disabled={!tasks.length} onClick={() => void aio.startAll()}>▶ 전부 시작</button>
-          <button className="btn stop" disabled={!counts.live && !counts.scheduled} onClick={() => void aio.stopAll()}>■ 전부 멈춤</button>
+          <button className="btn go" disabled={!tasks.length} onClick={() => void aio.startAll()}><Icon name="play" />전부 시작</button>
+          <button className="btn stop" disabled={!counts.live && !counts.scheduled} onClick={() => void aio.stopAll()}><Icon name="stop" />전부 멈춤</button>
           <button className="btn ghost" onClick={() => setSettingsOpen(true)}>설정</button>
           <NoticeBell
             alerts={alerts} issueLines={issueLines} preparing={preparing}
@@ -609,18 +610,18 @@ export function App() {
                               {rt.status === "stopping" ? (
                                 <button className="icon force" title="강제 종료 — 열린 구매 창도 같이 닫힙니다" onClick={() => void aio.stop(t.id)}>강제</button>
                               ) : live ? (
-                                <button className="icon stop" title="멈춤 (Ctrl+C 와 같다)" onClick={() => void aio.stop(t.id)}>■</button>
+                                <button className="icon stop" title="멈춤 (Ctrl+C 와 같다)" onClick={() => void aio.stop(t.id)}><Icon name="stop" /></button>
                               ) : rt.status === "scheduled" ? (
-                                <button className="icon stop" title="예약 거두기" onClick={() => void aio.stop(t.id)}>■</button>
+                                <button className="icon stop" title="예약 거두기" onClick={() => void aio.stop(t.id)}><Icon name="stop" /></button>
                               ) : (
-                                <button className="icon go" title="시작" onClick={() => startOne(t)}>▶</button>
+                                <button className="icon go" title="시작" onClick={() => startOne(t)}><Icon name="play" /></button>
                               )}
-                              <button className="icon" title="태스크 창 — 이 태스크의 상태·로그를 따로 봅니다" onClick={() => void aio.openTaskWatch(t.id)}>🖥</button>
+                              <button className="icon" title="태스크 창 — 이 태스크의 상태·로그를 따로 봅니다" onClick={() => void aio.openTaskWatch(t.id)}><Icon name="window" /></button>
                               <button
                                 className="icon" disabled={rt.status === "stopping"} onClick={() => setEditing({ ...t })}
                                 title={live ? "고치기 — 돌고 있는 채로 고칩니다" : "고치기"}
-                              >✎</button>
-                              <button className="icon" title="지우기" onClick={() => void removeTask(t)}>✕</button>
+                              ><Icon name="edit" /></button>
+                              <button className="icon" title="지우기" onClick={() => void removeTask(t)}><Icon name="x" /></button>
                             </div>
                           </td>
                         </tr>
@@ -759,7 +760,7 @@ function NoticeBell({ alerts, issueLines, preparing, onPrepare, onProfiles }: {
         type="button" className={`btn ghost notice-btn ${open ? "on" : ""}`} onClick={() => setOpen(!open)}
         title={count ? `알림 ${count}개` : "알림 없음"}
       >
-        🔔{count > 0 && <span className={`notice-count ${blocking ? "bad" : ""}`}>{count}</span>}
+        <Icon name="bell" />{count > 0 && <span className={`notice-count ${blocking ? "bad" : ""}`}>{count}</span>}
       </button>
       {open && (
         <div className="notice-pop">
@@ -767,7 +768,7 @@ function NoticeBell({ alerts, issueLines, preparing, onPrepare, onProfiles }: {
             <b>알림</b>
             <span className="muted small">{count ? `${count}개` : ""}</span>
             <span className="grow" />
-            <button type="button" className="icon" title="닫기" onClick={() => setOpen(false)}>✕</button>
+            <button type="button" className="icon" title="닫기" onClick={() => setOpen(false)}><Icon name="x" /></button>
           </div>
           {!alerts.length && <div className="muted notice-empty">알림이 없습니다.</div>}
           {alerts.map((info) => {
@@ -1061,11 +1062,17 @@ function TaskForm({ task, infos, live, profiles, usersOf, onLogin, onUpsertProfi
           </>
         ) : (
           <>
+            {/* 칼하트윕은 옵션이 사이즈다 — 주소를 적으면 그 상품의 사이즈·재고를 받아 버튼으로 고른다 (옵션 칸에 "270,275"). */}
+            {t.site === "carhartt" && (
+              <ProductSizePicker site={t.site} url={t.url} valid={valid} option={t.option} onChange={(option) => set("option", option)} />
+            )}
             <div className="row">
-              <label>
-                옵션 <span className="muted">(글자 일부)</span>
-                <input value={t.option} onChange={(e) => set("option", e.target.value)} />
-              </label>
+              {t.site !== "carhartt" && (
+                <label>
+                  옵션 <span className="muted">(글자 일부)</span>
+                  <input value={t.option} onChange={(e) => set("option", e.target.value)} />
+                </label>
+              )}
               <label className="narrow">
                 수량
                 <input type="number" min={1} value={t.ea} onChange={(e) => set("ea", Math.max(1, Number(e.target.value) || 1))} />
@@ -1262,7 +1269,7 @@ function ProfilePicker({ t, profiles, usersOf, error, onPick, onLogin, onCreated
       )}
       {inUse.length > 0 && spec.oneTaskPerProfile && (
         <span className="warn-text small">
-          ⚠ 이 프로필은 현재 사용 중입니다 ({inUse.join(", ")}). {spec.name}는 같은 프로필로 동시에 하나만 실행할 수 있습니다
+          <Icon name="alert" /> 이 프로필은 현재 사용 중입니다 ({inUse.join(", ")}). {spec.name}는 같은 프로필로 동시에 하나만 실행할 수 있습니다
           — 저장은 되지만, 그것이 멈추기 전에는 시작하지 않습니다.
         </span>
       )}
@@ -1330,11 +1337,11 @@ function DropFields({ d, floor, monitorMs, set }: {
     return `${day} ${at.toTimeString().slice(0, 8)}`;
   };
   let preview: string;
-  if (!d.dropTime.trim()) preview = "드랍 시각을 비워 두면 ▶ 를 누를 때 바로 드랍 모드로 띄웁니다.";
+  if (!d.dropTime.trim()) preview = "드랍 시각을 비워 두면 시작을 누를 때 바로 드랍 모드로 띄웁니다.";
   else if (!plan) preview = "시각을 알아보지 못했습니다 — HH:mm:ss 로 적어 주세요.";
-  else if (plan.late) preview = `드랍 시각(${when(plan.dropAt)})이 막 지났습니다 — ▶ 를 누르면 바로 띄웁니다.`;
-  else if (plan.startAt <= now) preview = `${when(plan.dropAt)} 드랍 — 미리 띄울 때가 지나 ▶ 를 누르면 바로 띄웁니다.`;
-  else preview = `${when(plan.dropAt)} 드랍 · ▶ 를 누르면 예약하고 ${when(plan.startAt)} 에 띄웁니다 (${countdown(plan.startAt - now)} 뒤).`;
+  else if (plan.late) preview = `드랍 시각(${when(plan.dropAt)})이 막 지났습니다 — 시작을 누르면 바로 띄웁니다.`;
+  else if (plan.startAt <= now) preview = `${when(plan.dropAt)} 드랍 — 미리 띄울 때가 지나 시작을 누르면 바로 띄웁니다.`;
+  else preview = `${when(plan.dropAt)} 드랍 · 시작을 누르면 예약하고 ${when(plan.startAt)} 에 띄웁니다 (${countdown(plan.startAt - now)} 뒤).`;
   const slow = d.intervalMs !== null && d.intervalMs < floor.minIntervalMs;
   return (
     <fieldset className="timing drop">
@@ -1687,6 +1694,7 @@ const LOGIN_HOW: Record<SiteId, string> = {
   naver: "원본의 로그인 창(--login)이 뜨면 창 안에서 직접 로그인하세요.",
   bnkr: "로그인 창이 뜨면 창 안에서 직접 로그인하세요 (reCAPTCHA 포함). 토큰이 한 시간짜리라 오래 두었으면 다시 로그인하세요.",
   kream: "크롬 창이 뜨면 창 안에서 직접 로그인하세요 (휴대폰 인증 포함). 로그인되면 창이 저절로 닫히고, 쿠키가 태스크의 크롬에 심어집니다.",
+  carhartt: "크롬 창이 뜨면 창 안에서 직접 로그인하세요. 로그인되면 창이 저절로 닫히고 토큰이 프로필에 저장됩니다. 자동 로그인을 넣어 두면 창 없이 로그인합니다 (비밀번호를 5번 틀리면 계정이 잠깁니다).",
 };
 
 function ProfileCard({ p, assigned, users, logOpen, onLogin, onShowLog, onEdit, onPin, onAutoLogin, onUpsert, onDeleted }: {
@@ -1788,8 +1796,8 @@ function ProfileCard({ p, assigned, users, logOpen, onLogin, onShowLog, onEdit, 
           title={p.isActive ? "끄면 태스크 폼에서 고를 수 없습니다 (이미 고른 태스크는 그대로)" : "다시 태스크 폼에서 고를 수 있게 합니다"}
         >{p.isActive ? "끄기" : "켜기"}</button>
         <button type="button" className="icon" title="로그 보기" onClick={onShowLog}>≡</button>
-        <button type="button" className="icon" title="고치기 (이름 · 메모)" disabled={busy} onClick={onEdit}>✎</button>
-        <button type="button" className="icon" title="지우기" disabled={busy || loggingIn} onClick={remove}>✕</button>
+        <button type="button" className="icon" title="고치기 (이름 · 메모)" disabled={busy} onClick={onEdit}><Icon name="edit" /></button>
+        <button type="button" className="icon" title="지우기" disabled={busy || loggingIn} onClick={remove}><Icon name="x" /></button>
       </div>
       {fail && <span className="err small">{fail}</span>}
     </div>
@@ -1841,7 +1849,7 @@ function PinModal({ profile, info, onSaved, onClose }: {
         <button
           type="button" className="icon" title={show[key] ? "가리기" : "보기"}
           onClick={() => setShow((s) => ({ ...s, [key]: !s[key] }))}
-        >{show[key] ? "🙈" : "👁"}</button>
+        ><Icon name={show[key] ? "eyeOff" : "eye"} /></button>
       </div>
     </label>
   );
@@ -1943,7 +1951,7 @@ function AutoLoginModal({ profile, onSaved, onClose }: { profile: Profile; onSav
           비밀번호
           <div className="pin-field">
             <input type={show ? "text" : "password"} autoComplete="off" value={password} onChange={(e) => setPassword(e.target.value)} />
-            <button type="button" className="icon" title={show ? "가리기" : "보기"} onClick={() => setShow((v) => !v)}>{show ? "🙈" : "👁"}</button>
+            <button type="button" className="icon" title={show ? "가리기" : "보기"} onClick={() => setShow((v) => !v)}><Icon name={show ? "eyeOff" : "eye"} /></button>
           </div>
         </label>
         <p className="hint">
@@ -1999,6 +2007,7 @@ const ROOT_HINT: Record<SiteId, string> = {
   naver: "원본 프로젝트 (naver/ts) — src/cli.ts 를 tsx 로 들인다",
   bnkr: "원본 프로젝트 (aio/node) — dist/bnkr-test/index.js 를 들인다",
   kream: "원본 프로젝트 (aio/node) — dist/kream/index.js 를 들인다 (브랜드배송 상품을 로그인된 크롬으로 보고 산다)",
+  carhartt: "원본 프로젝트 (aio/node) — dist/carhartt/index.js 를 들인다 (공개 API 로 재고를 보고, 담기·주문 생성까지 한 뒤 주문서를 크롬으로 연다)",
 };
 
 function SettingsForm({ infos, profiles, preparing, onPrepare, onSaved, onClose }: {
@@ -2048,10 +2057,10 @@ function SettingsForm({ infos, profiles, preparing, onPrepare, onSaved, onClose 
               </label>
               {info && (
                 <ul className="checks">
-                  <li className={info.entryExists ? "ok" : "err"}>{info.entryExists ? "✔" : "✖"} 원본 {info.entry}</li>
-                  <li className={info.seedExists ? "ok" : "muted"}>{info.seedExists ? "✔" : "–"} 씨앗 설정</li>
+                  <li className={info.entryExists ? "ok" : "err"}><Icon name={info.entryExists ? "check" : "x"} /> 원본 {info.entry}</li>
+                  <li className={info.seedExists ? "ok" : "muted"}>{info.seedExists ? <Icon name="check" /> : "–"} 씨앗 설정</li>
                   <li className={loggedIn ? "ok" : "muted"}>
-                    {loggedIn ? "✔" : "–"} 로그인 프로필 {mine.length}개 · 로그인됨 {loggedIn}개 <span className="muted">(프로필 화면에서)</span>
+                    {loggedIn ? <Icon name="check" /> : "–"} 로그인 프로필 {mine.length}개 · 로그인됨 {loggedIn}개 <span className="muted">(프로필 화면에서)</span>
                   </li>
                   {[...info.problems, ...info.warnings].map((p) => <li key={p} className="err">{p}</li>)}
                   {info.notes.map((n) => <li key={n} className="muted">{n}</li>)}
