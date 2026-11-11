@@ -7,6 +7,7 @@ import { useMemo, useState } from "react";
 import { isHttpUrl, METHOD_LABEL, RELEASE_METHODS, releaseProblem, tidyRelease } from "../shared/releases";
 import { SITE_IDS, SITES } from "../shared/sites";
 import type { Release, ReleaseInput, ReleaseList } from "../shared/types";
+import { Icon } from "./icons";
 import { errText, shortLink } from "./App";
 
 const aio = window.aio;
@@ -153,7 +154,7 @@ export function ReleasesPage({ list, now, onList }: {
             발매 일시·방식과 공식 판매처·응모 페이지 링크를 모아 둡니다. 드랍 시각을 정한 드랍 태스크나, 롯데 태스크 창에서
             대기열 보기로 읽은 열리는 시각은 <b>자동</b>으로 여기 뜹니다.
           </p>
-          <button type="button" className="btn primary" onClick={() => setEditing({ edit: null, seed: null })}>+ 발매 추가</button>
+          <button type="button" className="btn" onClick={() => setEditing({ edit: null, seed: null })}>+ 발매 추가</button>
         </div>
       ) : (
         <>
@@ -170,7 +171,7 @@ export function ReleasesPage({ list, now, onList }: {
           {past.length > 0 && (
             <>
               <button type="button" className="group-head fold" onClick={() => setPastOpen((v) => !v)} aria-expanded={pastOpen}>
-                <span className="fold-mark">{pastOpen ? "▾" : "▸"}</span> <b>지난 발매</b> <span className="muted">{past.length}개</span>
+                <span className="fold-mark"><Icon name={pastOpen ? "chevronDown" : "chevronRight"} /></span> <b>지난 발매</b> <span className="muted">{past.length}개</span>
               </button>
               {pastOpen && <div className="release-cards">{past.map(card)}</div>}
             </>
@@ -219,13 +220,13 @@ function ReleaseCard({ r, now, onEdit, onCopy, onDelete, onHide }: {
           <span className="mono">{dateText(r.releaseAt)}</span>
           <span className={`until ${today ? "today" : ""}`}>{untilText(r.releaseAt, now)}</span>
         </div>
-        {auto && r.origin && <div className="muted small">⚙ {r.origin}</div>}
+        {auto && r.origin && <div className="muted small">{r.origin}</div>}
         {r.memo && <div className="release-memo small">{r.memo}</div>}
         {r.links.length > 0 && (
           <div className="release-links">
             {r.links.map((l, i) => (
               <button key={i} type="button" className="btn small" title={`${l.url}\n기본 브라우저로 엽니다`} onClick={() => void openLink(l.url)}>
-                ↗ {l.label || shortLink(l.url)}
+                <Icon name="external" /><span className="clip">{l.label || shortLink(l.url)}</span>
               </button>
             ))}
           </div>
@@ -235,12 +236,12 @@ function ReleaseCard({ r, now, onEdit, onCopy, onDelete, onHide }: {
           {auto ? (
             <>
               <button type="button" className="btn small ghost" title="수동 항목으로 베껴 링크·메모를 붙입니다" onClick={onCopy}>수동으로 베끼기</button>
-              <button type="button" className="icon" title="숨기기 — 태스크는 그대로 둡니다" onClick={onHide}>✕</button>
+              <button type="button" className="icon" title="숨기기 — 태스크는 그대로 둡니다" onClick={onHide}><Icon name="x" /></button>
             </>
           ) : (
             <>
-              <button type="button" className="icon" title="고치기" onClick={onEdit}>✎</button>
-              <button type="button" className="icon" title="지우기" onClick={onDelete}>✕</button>
+              <button type="button" className="icon" title="고치기" onClick={onEdit}><Icon name="edit" /></button>
+              <button type="button" className="icon" title="지우기" onClick={onDelete}><Icon name="x" /></button>
             </>
           )}
         </div>
@@ -342,7 +343,7 @@ function ReleaseForm({ initial, seed, stores, onSaved, onCancel }: {
                 {l.url.trim() && !isHttpUrl(l.url) && <span className="err small">http:// 나 https:// 주소만 됩니다.</span>}
                 {!l.url.trim() && l.label.trim() && <span className="err small">주소를 넣으세요.</span>}
               </div>
-              <button type="button" className="icon" title="이 링크 빼기" onClick={() => set("links", r.links.filter((_, j) => j !== i))}>✕</button>
+              <button type="button" className="icon" title="이 링크 빼기" onClick={() => set("links", r.links.filter((_, j) => j !== i))}><Icon name="x" /></button>
             </div>
           ))}
           <datalist id="release-link-labels">{LINK_LABELS.map((s) => <option key={s} value={s} />)}</datalist>
@@ -360,7 +361,7 @@ function ReleaseForm({ initial, seed, stores, onSaved, onCancel }: {
         {fail && <p className="err small">{fail}</p>}
         <div className="modal-actions">
           <button type="button" className="btn ghost" onClick={onCancel}>취소</button>
-          <button type="submit" className="btn primary" disabled={!!problem || saving}>{initial ? "저장" : "➕ 추가"}</button>
+          <button type="submit" className="btn primary" disabled={!!problem || saving}>{initial ? "저장" : "추가"}</button>
         </div>
       </form>
     </div>

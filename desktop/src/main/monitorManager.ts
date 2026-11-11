@@ -324,20 +324,25 @@ export class MonitorManager extends EventEmitter {
     const adapter = ADAPTERS[def.site];
     const text = raw.replace(STAMP, "").trim();
     const patch: Partial<MonitorState> = { lastResult: text };
-    const stock = adapter.monitorSignal.stock.exec(text);
+    const signal = adapter.monitorSignal;
+    const stock = signal.stock.exec(text) ?? signal.listed?.exec(text);
     if (stock) patch.stock = stock[1]!;
     if (adapter.progress.round?.test(text)) {
       patch.checkCount = state.checkCount + 1;
       patch.lastCheckAt = now();
     }
-    const found = adapter.monitorSignal.found.exec(text);
-    if (found) {
+    const found = signal.found.exec(text);
+    // 카테고리 모니터의 신상품은 그 상품 이름으로 알린다 (한 바퀴에 여럿이면 하나씩).
+    const fresh = signal.fresh?.exec(text);
+    if (found || fresh) {
       const at = now();
       patch.status = "found";
       patch.foundAt = at;
       this.setState(id, patch);
-      this.push(id, "sys", `🔴 재고 발견! ${def.name}`);
-      const event: MonitorFound = { monitorId: id, site: def.site, name: def.name, url: found[1]!, at, detail: text, onFound: def.onFound };
+      const event: MonitorFound = fresh
+        ? { monitorId: id, site: def.site, name: fresh[1]!, url: fresh[2]!, at, detail: text, onFound: def.onFound, kind: "new" }
+        : { monitorId: id, site: def.site, name: def.name, url: found![1]!, at, detail: text, onFound: def.onFound, kind: "stock" };
+      this.push(id, "sys", fresh ? `🆕 신상품 발견! ${event.name}` : `🔴 재고 발견! ${def.name}`);
       this.emit("found", event);
       return;
     }

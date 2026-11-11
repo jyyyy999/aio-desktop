@@ -110,7 +110,7 @@ export const DEFAULT_CONFIG: KreamConfig = {
   order_action: "submit",
   pg_password: "",
   check_interval_ms: 5000,
-  min_interval_ms: 3000,
+  min_interval_ms: 1000,
   max_retries: 3,
   retry_delay_ms: 3000,
   buy_on_restock_only: false,

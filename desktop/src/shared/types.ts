@@ -7,7 +7,29 @@
  * 어느 원본으로 돌리나. main 과 화면이 사이트 사이의 차이에 대해 아는 것은 이것뿐이다 —
  * 원본을 어떻게 띄우는지는 main/sites/ 의 어댑터가 안다.
  */
-export type SiteId = "lotte" | "naver" | "bnkr" | "supreme" | "kream";
+export type SiteId = "lotte" | "naver" | "bnkr" | "supreme" | "kream" | "carhartt";
+
+/** 사이즈 하나와 그 재고 (폼의 사이즈 고르기). */
+export interface ProductSize {
+  /** 사이트가 쓰는 글자 그대로 — "270" · "XL" · "OS". 태스크의 옵션 칸에 이 글자가 간다. */
+  name: string;
+  /** 남은 수량. 사이트가 안 주면 null. */
+  stock: number | null;
+  inStock: boolean;
+}
+
+export interface ProductSizes {
+  /** 상품 이름 (색까지). */
+  name: string;
+  price: number;
+  /** 발매 시각 (ISO). 이미 팔고 있으면 null. */
+  availableFrom: string | null;
+  /** 1인 구매 수량. 0 이면 제한 없음. */
+  perUser: number;
+  sizes: ProductSize[];
+  /** 못 받았으면 까닭 (그때 sizes 는 빈 배열). */
+  error?: string;
+}
 
 /**
  * 태스크를 무엇으로 돌릴지. 원본의 명령줄 옵션에 하나씩 대응한다 (어댑터가 옮긴다).
@@ -392,6 +414,8 @@ export interface MonitorFound {
   /** 발견을 알린 원본의 줄. */
   detail: string;
   onFound: MonitorOnFound;
+  /** stock: 재고가 풀렸다 · new: 카테고리에 처음 보는 상품이 올라왔다 (name 은 그 상품 이름) */
+  kind: "stock" | "new";
 }
 
 /** 워커 → main. */
@@ -625,6 +649,11 @@ export interface AioApi {
    * (붙인 이름이 먼저).
    */
   productNames(): Promise<Record<string, string>>;
+  /**
+   * 상품의 사이즈와 재고 — 폼의 사이즈 고르기가 주소를 적으면 부른다 (칼하트윕만: 공개 API 가 사이즈마다 수량까지 준다).
+   * 사이즈를 바깥에서 못 읽는 사이트는 null. 못 받았으면 error 에 까닭.
+   */
+  productSizes(site: SiteId, url: string): Promise<ProductSizes | null>;
   onProductNames(cb: (names: Record<string, string>) => void): () => void;
   prepareSite(site: SiteId): Promise<number>;
   listProfiles(): Promise<Profile[]>;

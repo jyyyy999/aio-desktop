@@ -14,7 +14,7 @@
  */
 import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { isNaverSearch, NAVER_ACTIONS } from "../../shared/sites.js";
+import { isNaverCategory, isNaverSearch, NAVER_ACTIONS } from "../../shared/sites.js";
 import type { CommonSettings, MonitorDef, OrderAction, SiteSettings, TaskDef, TimingDefaults, WebhookInfo } from "../../shared/types.js";
 import { MONITOR_MAX_BUYS, objectAt, readJson, writeJsonAtomic, type JsonObject, type SiteAdapter } from "./adapter.js";
 
@@ -160,7 +160,10 @@ function timingFields(task: TaskDef, seed: JsonObject): NaverTimingFields {
  * 쉰다 — 발견한 뒤에도 계속 보려면 풀어 둔다.
  */
 export interface NaverMonitorFields {
-  top: { products: string[]; categories: string[]; check_interval_seconds: number; discord_webhook_url: string };
+  top: {
+    products: string[]; categories: string[]; check_interval_seconds: number; category_interval_seconds?: number;
+    discord_webhook_url: string;
+  };
   buy: {
     targets: { url: string; ea: number; option: string; max_price: number; label: string }[];
     buy_on_restock_only: boolean;
@@ -176,15 +179,20 @@ function writeMonitorConfig(def: MonitorDef, home: string, s: SiteSettings): str
   mkdirSync(home, { recursive: true });
   const seed = readJson(s.seed) ?? {};
   const url = def.productUrl.trim();
+  // 카테고리 모니터는 categories 에 그 카테고리 하나만 적는다 — 원본이 최신 등록순 목록을 훑어 처음 보는 상품을
+  // "🆕" 줄로 찍는다. 첫 바퀴는 기준선이고, dry-run 이라 기준선은 상태 파일에 안 남는다 (다시 켜면 다시 잡는다).
+  const category = isNaverCategory(url);
+  const interval = Math.max(Math.ceil(def.checkIntervalMs / 1000), MIN_INTERVAL_SECONDS);
   const fields: NaverMonitorFields = {
-    // 감시 대상은 이 상품 하나. 카테고리(신상품) 감시는 모니터 몫이 아니라 뺀다. 간격은 원본이 정수 초로만 받는다.
+    // 감시 대상은 이 상품(또는 카테고리) 하나. 간격은 원본이 정수 초로만 받는다.
     top: {
-      products: [url], categories: [],
-      check_interval_seconds: Math.max(Math.ceil(def.checkIntervalMs / 1000), MIN_INTERVAL_SECONDS),
+      products: category ? [] : [url], categories: category ? [url] : [],
+      check_interval_seconds: interval,
+      ...(category ? { category_interval_seconds: interval } : {}),
       discord_webhook_url: "",
     },
     buy: {
-      targets: [{ url, ea: def.ea || 1, option: def.option, max_price: def.maxPrice || 0, label: def.name }],
+      targets: category ? [] : [{ url, ea: def.ea || 1, option: def.option, max_price: def.maxPrice || 0, label: def.name }],
       buy_on_restock_only: def.restockOnly,
       max_buys_per_run: MONITOR_MAX_BUYS,
       stop_after_success: false,
@@ -357,7 +365,8 @@ export const naver: SiteAdapter = {
   productNameLine: /^(?:\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \[INFO\] )?(.+?) — [^—]+ \(재고 [^)]*\)$/,
   progress: {
     // 스토어 검색 태스크는 상품 줄이 없다 — 원본 search.ts 가 바퀴마다 찍는 검색 줄로 센다.
-    round: / — .+ \(재고 [^)]*\)$|검색 — \d+개 중 /,
+    // 카테고리 모니터는 원본 category.ts 가 바퀴마다 찍는 줄 (기준선 · 신상품 없음 · 신상품 N개).
+    round: / — .+ \(재고 [^)]*\)$|검색 — \d+개 중 |카테고리 (?:기준선 등록|신상품 없음) — 상품 \d+개|신상품 \d+개 감지 \(/,
     buying: /구매 가능, 구매하기를 누릅니다/,
     checkout: /직접 (?:해|넣어)주세요|구매 창 \d+개가 열려 있습니다|간편결제 비밀번호까지 넣었습니다/,
     paid: /⭐ (?:결제 완료|마지막 확인까지 눌렀습니다)/,
@@ -387,9 +396,12 @@ export const naver: SiteAdapter = {
   },
 
   // 원본 order.ts 의 doBuy 가 dry-run 일 때만 찍는 줄 · watch.ts 가 확인마다 찍는 "이름 — 품절 (재고 0)".
+  // 카테고리 모니터는 category.ts 가 처음 보는 상품마다 찍는 "🆕 이름 (상품번호) 주소" 와 바퀴마다의 목록 줄.
   monitorSignal: {
     found: /\[dry-run\] 여기서 구매하기를 눌렀을 것입니다 — (\S+)/,
     stock: / — (\S+ \(재고 [^)]*\))$/,
+    fresh: /🆕 (.+) \(\d+\) (https?:\/\/\S+)$/,
+    listed: /카테고리 (?:기준선 등록|신상품 없음) — (상품 \d+개 \(전체 [^)]*\))/,
   },
 
   resetState(home) {

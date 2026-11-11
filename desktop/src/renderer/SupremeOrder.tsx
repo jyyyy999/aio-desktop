@@ -211,7 +211,7 @@ export function SupremeOrderPage(): React.ReactElement {
           <p className={`small ${state.encrypted ? "muted" : "warn-text"}`}>
             {state.encrypted
               ? "카드·생년월일·PIN 은 이 PC 에서만 풀리는 암호화(safeStorage)로 저장합니다. 값은 화면으로 다시 오지 않습니다 — 바꿀 때만 새로 입력하세요."
-              : "⚠ 이 PC 에서 암호화를 쓸 수 없습니다 — 카드 정보는 저장되지 않습니다."}
+              : "이 PC 에서 암호화를 쓸 수 없습니다 — 카드 정보는 저장되지 않습니다"}
           </p>
           <div className="order-grid">
             {SECRET_INPUTS.map((one) => (

@@ -2,15 +2,16 @@
  * 모니터 창 (팝업) — 모니터 하나의 상태·대상·실시간 로그. main 이 #monitor/<id> 로 연다 (모니터마다 창 하나).
  * 창을 닫아도 모니터는 계속 돈다.
  *
- * 재고를 발견하면 위에 "재고 발견!" 판이 뜬다. 구매 전환으로 만든 모니터면 🛒 즉시 구매 전환 — 누르면 모니터를
+ * 재고를 발견하면 위에 "재고 발견!" 판이 뜬다. 구매 전환으로 만든 모니터면 <Icon name="cart" />즉시 구매 전환 — 누르면 모니터를
  * 멈추고 같은 대상으로 지금 구매 태스크를 띄운다 (저절로는 안 한다).
  */
 import { useEffect, useState } from "react";
-import { MONITOR_RUNNING, MONITOR_STATUS_LABEL, monitorShownName, ON_FOUND_LABEL } from "../shared/monitors";
+import { foundWord, isCategoryMonitor, MONITOR_RUNNING, MONITOR_STATUS_LABEL, monitorShownName, ON_FOUND_LABEL } from "../shared/monitors";
 import { SITES } from "../shared/sites";
 import type { LogLine, MonitorEntry, Profile } from "../shared/types";
 import { errText, LOGIN_LABEL, LogView, mergeLogs, span } from "./App";
-import { agoOf, clockOf, MONITOR_DOT, switchMonitor } from "./Monitors";
+import { Icon } from "./icons";
+import { agoOf, clockOf, switchMonitor } from "./Monitors";
 
 const aio = window.aio;
 
@@ -80,7 +81,7 @@ export function MonitorPopup({ monitorId }: { monitorId: string }) {
 
   useEffect(() => {
     if (!def || !state) return;
-    const head = found ? "🔴 재고 발견!" : `${MONITOR_DOT[state.status]} 모니터`;
+    const head = found ? foundWord(def) : `모니터 ${MONITOR_STATUS_LABEL[state.status]}`;
     document.title = `${head} — ${SITES[def.site].name} ${name}`;
   }, [def, state, found, name]);
 
@@ -110,7 +111,7 @@ export function MonitorPopup({ monitorId }: { monitorId: string }) {
   return (
     <div className={`monitor-popup ${found ? "found" : ""}`}>
       <header className="tw-head">
-        <span>📊</span>
+        <Icon name="monitors" />
         <span className="tw-title">{SITES[def.site].name} - {name}</span>
         <span className="grow" />
         <span className={`pill mon ${state.status}`}>{MONITOR_STATUS_LABEL[state.status]}</span>
@@ -118,7 +119,7 @@ export function MonitorPopup({ monitorId }: { monitorId: string }) {
 
       {found && (
         <section className="found-panel">
-          <div className="found-big">🎯 재고 발견!</div>
+          <div className="found-big">{foundWord(def)}</div>
           <div>{SITES[def.site].name} - {name}</div>
           <div className="muted">발견 시간: {clockOf(state.foundAt)}</div>
           <div className="account-actions">
@@ -130,7 +131,7 @@ export function MonitorPopup({ monitorId }: { monitorId: string }) {
                   if (taskId) setMsg({ ok: true, text: "구매 태스크로 전환했습니다 — 메인 창의 태스크 목록에서 볼 수 있습니다." });
                 })}
               >
-                🛒 즉시 구매 전환
+                <Icon name="cart" />즉시 구매 전환
               </button>
             )}
             <button
@@ -155,7 +156,7 @@ export function MonitorPopup({ monitorId }: { monitorId: string }) {
         <div className="tw-cells">
           <div className={`tw-cell mon-state ${state.status}`}>
             <div className="l">상태</div>
-            <div className="v">{MONITOR_DOT[state.status]} {MONITOR_STATUS_LABEL[state.status]}</div>
+            <div className="v">{MONITOR_STATUS_LABEL[state.status]}</div>
           </div>
           <div className="tw-cell">
             <div className="l">체크 · 간격</div>
@@ -171,7 +172,7 @@ export function MonitorPopup({ monitorId }: { monitorId: string }) {
             <div className="v">{agoOf(state.lastCheckAt, now)}</div>
           </div>
           <div className="tw-cell">
-            <div className="l">재고</div>
+            <div className="l">{isCategoryMonitor(def) ? "목록" : "재고"}</div>
             <div className="v">{state.stock ?? "—"}</div>
           </div>
         </div>
@@ -183,10 +184,16 @@ export function MonitorPopup({ monitorId }: { monitorId: string }) {
       <section className="mon-target-box">
         <div className="l muted small">대상 정보</div>
         <div>제품: <b>{name}</b> <span className="muted small">{SITES[def.site].productCode(def.productUrl)}</span></div>
-        <div>옵션: {def.option || <span className="muted">없음</span>} · 수량 {def.ea}</div>
-        <div>상한가: {def.maxPrice ? `${def.maxPrice.toLocaleString()}원` : <span className="muted">무제한</span>}</div>
+        {isCategoryMonitor(def) ? (
+          <div className="muted small">카테고리에 처음 보는 상품이 올라오면 알립니다 (첫 확인은 기준선).</div>
+        ) : (
+          <>
+            <div>옵션: {def.option || <span className="muted">없음</span>} · 수량 {def.ea}</div>
+            <div>상한가: {def.maxPrice ? `${def.maxPrice.toLocaleString()}원` : <span className="muted">무제한</span>}</div>
+          </>
+        )}
         <div className="muted small">
-          {def.restockOnly ? "재입고 순간에만 발견" : "지금 팔고 있어도 발견"} · 발견 시 {ON_FOUND_LABEL[def.onFound]} · 프로필{" "}
+          {isCategoryMonitor(def) ? "새로 올라온 상품 발견" : def.restockOnly ? "재입고 순간에만 발견" : "지금 팔고 있어도 발견"} · 발견 시 {ON_FOUND_LABEL[def.onFound]} · 프로필{" "}
           {profile ? `${profile.name} (${LOGIN_LABEL[profile.loginStatus]})` : def.profileId ? "지워짐" : "없음"}
         </div>
       </section>
@@ -194,7 +201,7 @@ export function MonitorPopup({ monitorId }: { monitorId: string }) {
       <section className="tw-logs">
         <div className="logs-head">
           <span>
-            📋 실시간 로그 <span className="muted">· {shown.length}줄{frozen ? ` · 멈춘 뒤 ${logs.filter((l) => l.seq > (frozen.at(-1)?.seq ?? 0)).length}줄 더 옴` : ""}</span>
+            실시간 로그 <span className="muted">· {shown.length}줄{frozen ? ` · 멈춘 뒤 ${logs.filter((l) => l.seq > (frozen.at(-1)?.seq ?? 0)).length}줄 더 옴` : ""}</span>
           </span>
         </div>
         <LogView lines={shown} />
@@ -202,18 +209,18 @@ export function MonitorPopup({ monitorId }: { monitorId: string }) {
 
       <footer className="tw-foot">
         {(state.status === "monitoring" || state.status === "found") && (
-          <button type="button" className="btn small" disabled={busy} onClick={() => void act(() => aio.monitor.pause(monitorId))}>⏸ 일시정지</button>
+          <button type="button" className="btn small" disabled={busy} onClick={() => void act(() => aio.monitor.pause(monitorId))}><Icon name="pause" />일시정지</button>
         )}
         {state.status === "paused" && (
-          <button type="button" className="btn small go" disabled={busy} onClick={() => void act(() => aio.monitor.resume(monitorId))}>▶ 재개</button>
+          <button type="button" className="btn small go" disabled={busy} onClick={() => void act(() => aio.monitor.resume(monitorId))}><Icon name="play" />재개</button>
         )}
         {!live && state.status !== "paused" && (
-          <button type="button" className="btn small go" disabled={busy} onClick={() => void act(() => aio.monitor.start(monitorId))}>▶ 시작</button>
+          <button type="button" className="btn small go" disabled={busy} onClick={() => void act(() => aio.monitor.start(monitorId))}><Icon name="play" />시작</button>
         )}
-        <button type="button" className="btn small" disabled={busy} onClick={() => void saveLog()} title="로그(텍스트)와 이 창의 모습(PNG)을 모니터 폴더에 적습니다">📸 로그 저장</button>
+        <button type="button" className="btn small" disabled={busy} onClick={() => void saveLog()} title="로그(텍스트)와 이 창의 모습(PNG)을 모니터 폴더에 적습니다"><Icon name="camera" />로그 저장</button>
         {(live || state.status === "paused") && (
           <button type="button" className="btn small stop" disabled={busy && state.status !== "stopping"} onClick={() => void act(() => aio.monitor.stop(monitorId))}>
-            {state.status === "stopping" ? "강제" : "⏹ 중지"}
+            {state.status === "stopping" ? "강제" : <><Icon name="stop" />중지</>}
           </button>
         )}
         <button type="button" className="btn small ghost" onClick={() => setFrozen(frozen ? null : logs)} title="로그 보기만 멈춥니다 (모니터는 계속 봅니다)">

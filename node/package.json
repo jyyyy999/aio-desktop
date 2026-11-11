@@ -52,6 +52,7 @@
     "ww:status": "node dist/waitwhile/index.js --status",
     "ww:test": "node dist/waitwhile/index.js --test",
     "ww:dump": "node dist/waitwhile/index.js --dump",
+    "carhartt": "node dist/carhartt/index.js",
     "discord": "node dist/discord-open/index.js",
     "discord:token": "node dist/discord-open/index.js --token",
     "discord:open": "node dist/discord-open/index.js --open",

@@ -168,7 +168,7 @@ export const kream: SiteAdapter = {
       defaultAction: seed["order_action"] === "open" ? "open" : "submit",
       timing: {
         checkIntervalMs: num(seed["check_interval_ms"], 5000),
-        minIntervalMs: num(seed["min_interval_ms"], 3000),
+        minIntervalMs: num(seed["min_interval_ms"], 1000),
         wholeSeconds: false,
         maxRetries: num(seed["max_retries"], 3),
         retryDelayMs: num(seed["retry_delay_ms"], 3000),
@@ -288,16 +288,16 @@ export const kream: SiteAdapter = {
   stopGraceMs: null,
 
   rate: {
-    // KREAM 은 공개한 요청률 선이 없다. 상품 페이지가 무거워(약 800KB) 우리가 정한 안전선이다 — 간격 5초면 분당 12회.
+    // KREAM 은 공개한 요청률 선이 없다. 상품 페이지가 무거워(약 800KB) 우리가 정한 안전선이다 — 간격 5초면 분당 12회. 거부선 60 은 하한 1초로 상품 하나를 볼 때다.
     perMin(task, s) {
       if (task.mode === "buy" || task.mode === "status") return 0;
       const seed = readJson(s.seed) ?? {};
       const ms = task.checkIntervalMs ?? num(seed["check_interval_ms"], 5000);
-      return 60_000 / Math.max(num(seed["min_interval_ms"], 3000), ms);
+      return 60_000 / Math.max(num(seed["min_interval_ms"], 1000), ms);
     },
-    monitorPerMin: (def) => 60_000 / Math.max(3000, def.checkIntervalMs),
+    monitorPerMin: (def) => 60_000 / Math.max(1000, def.checkIntervalMs),
     warn: 20,
-    hard: 40,
+    hard: 60,
   },
 
   prepare(s): PrepareCommand {
